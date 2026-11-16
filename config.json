@@ -1,0 +1,21 @@
+{
+  "adb_path": "D:\\software\\adb\\platform-tools\\adb.exe",
+  "serial": "",
+  "interval_min": 3.0,
+  "interval_max": 6.0,
+  "duration_ms": 260,
+  "keep_awake": true,
+  "target_pkg": "com.xunmeng.pinduoduo",
+  "launch_app": false,
+  "guard_app": false,
+  "mode": "swipe",
+  "coin_modules": "shop_video,live,water",
+  "coin_max_minutes": 60,
+  "coin_done_delay": 10,
+  "coin_monitor_interval": 3.5,
+  "coin_swipe_duration": 260,
+  "coin_idle": true,
+  "coin_idle_interval": 3.5,
+  "coin_debug": false,
+  "coin_nn": true
+}

@@ -1,0 +1,146 @@
+{
+  "canvas": [
+    1080,
+    1920
+  ],
+  "templates": {
+    "page_coin": {
+      "file": "page_coin.png",
+      "desc": "金币二级界面标题「我的金币」(判断当前是不是金币页)",
+      "threshold": 0.85,
+      "scales": [
+        0.9,
+        1.0,
+        1.1
+      ],
+      "mode": "color"
+    },
+    "row_shop_video": {
+      "file": "row_shop_video.png",
+      "desc": "模块行「看商品视频得现金」",
+      "threshold": 0.85,
+      "scales": [
+        0.88,
+        1.0,
+        1.12
+      ],
+      "mode": "color"
+    },
+    "row_water": {
+      "file": "row_water.png",
+      "desc": "模块行「周末喝水翻倍赚钱」",
+      "threshold": 0.85,
+      "scales": [
+        0.88,
+        1.0,
+        1.12
+      ],
+      "mode": "color"
+    },
+    "row_live": {
+      "file": "row_live.png",
+      "desc": "模块行「看直播赚现金」",
+      "threshold": 0.85,
+      "scales": [
+        0.88,
+        1.0,
+        1.12
+      ],
+      "mode": "color"
+    },
+    "row_live2": {
+      "file": "row_live2.png",
+      "desc": "模块行「去直播间下单」—— 拼多多把「看直播赚现金」改成了这个文案,同一模块的第二个变体",
+      "threshold": 0.85,
+      "scales": [
+        0.88,
+        1.0,
+        1.12
+      ],
+      "mode": "color"
+    },
+    "bubble_watch": {
+      "file": "bubble_watch.png",
+      "desc": "倒计时气泡的「再看」两字(进行中)。只裁字形不裁数字:MM:SS 一直在变",
+      "threshold": 0.65,
+      "scales": [
+        0.85,
+        1.0,
+        1.15,
+        1.3
+      ],
+      "mode": "lc"
+    },
+    "bubble_done": {
+      "file": "bubble_done.png",
+      "desc": "气泡的「任务完成」状态(两行字)",
+      "threshold": 0.65,
+      "scales": [
+        0.85,
+        1.0,
+        1.15,
+        1.3
+      ],
+      "mode": "lc"
+    },
+    "bubble_cooldown": {
+      "file": "bubble_cooldown.png",
+      "desc": "气泡变成「MM:SS 后领」= 这个模块今天做完了(真机确认:此时右上角显示「后领」,点进去也没用了,应返回金币页)",
+      "threshold": 0.62,
+      "scales": [
+        0.85,
+        1.0,
+        1.15,
+        1.3
+      ],
+      "mode": "lc"
+    },
+    "bubble_cooldown2": {
+      "file": "bubble_cooldown2.png",
+      "desc": "同上,商品视频页领取成功后右上角圆牌上的「后领」(底色和直播间不同,所以单独一张)",
+      "threshold": 0.62,
+      "scales": [
+        0.85,
+        1.0,
+        1.15,
+        1.3
+      ],
+      "mode": "lc"
+    },
+    "coin_entry": {
+      "file": "coin_entry.png",
+      "desc": "主信息流右上角圆环里的「金币」两字(点它进金币页)。只裁这两个字:上面的金币数字每次都在变,裁进去分数会掉到 0.5",
+      "threshold": 0.7,
+      "scales": [
+        0.9,
+        0.95,
+        1.0,
+        1.05,
+        1.1
+      ],
+      "mode": "color"
+    },
+    "water_popup_title": {
+      "file": "water_popup_title.png",
+      "desc": "喝水弹窗标题「周末加赠营养牛奶」",
+      "threshold": 0.7,
+      "scales": [
+        0.9,
+        1.0,
+        1.1
+      ],
+      "mode": "color"
+    },
+    "water_checkin_btn": {
+      "file": "water_checkin_btn.png",
+      "desc": "喝水弹窗底部按钮「喝水打卡领1500金币」",
+      "threshold": 0.7,
+      "scales": [
+        0.9,
+        1.0,
+        1.1
+      ],
+      "mode": "color"
+    }
+  }
+}

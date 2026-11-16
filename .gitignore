@@ -1,0 +1,21 @@
+# 运行环境(体积大、可重建)
+venv/
+venv_train/
+.venv/
+env/
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+# 运行产物
+logs/
+debug/
+swiper_error.log
+*.log
+# 训练产物(模型本体 nn/coindet.onnx 需要保留)
+nn/checkpoints/
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

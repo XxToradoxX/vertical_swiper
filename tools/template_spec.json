@@ -1,0 +1,100 @@
+{
+  "_comment": [
+    "模板裁剪规格。所有 box 都是 1080x1920 标准画布坐标 [x0, y0, x1, y1]。",
+    "换算:canonical_x = device_x * 1080 / device_w,canonical_y = device_y * 1920 / device_h。",
+    "换手机重新标定:改这里的 box,再跑 python tools/make_templates.py --context",
+    "然后看 debug/templates_context.png 确认绿框套住了元素。",
+    "注意:按钮不在这里做模板——识别到行标题后,按固定的相对位置去点右侧按钮(见 vision/recognizer.py 的 ROW_TAP_X)。"
+  ],
+  "canvas": [1080, 1920],
+  "templates": {
+    "page_coin": {
+      "desc": "金币二级界面标题「我的金币」(判断当前是不是金币页)",
+      "source": "二级界面滑动一下.jpg",
+      "box": [35, 470, 250, 532],
+      "threshold": 0.85,
+      "scales": [0.9, 1.0, 1.1]
+    },
+    "row_shop_video": {
+      "desc": "模块行「看商品视频得现金」",
+      "source": "二级界面滑动一下.jpg",
+      "box": [56, 1054, 290, 1098],
+      "threshold": 0.85,
+      "scales": [0.88, 1.0, 1.12]
+    },
+    "row_water": {
+      "desc": "模块行「周末喝水翻倍赚钱」",
+      "source": "二级界面滑动一下.jpg",
+      "box": [56, 1221, 428, 1266],
+      "threshold": 0.85,
+      "scales": [0.88, 1.0, 1.12]
+    },
+    "row_live": {
+      "desc": "模块行「看直播赚现金」",
+      "source": "二级界面滑动一下.jpg",
+      "box": [57, 1723, 198, 1768],
+      "threshold": 0.85,
+      "scales": [0.88, 1.0, 1.12]
+    },
+    "row_live2": {
+      "desc": "模块行「去直播间下单」—— 拼多多把「看直播赚现金」改成了这个文案,同一模块的第二个变体",
+      "source": "二级金币_去直播间下单.png",
+      "box": [56, 1086, 340, 1130],
+      "threshold": 0.85,
+      "scales": [0.88, 1.0, 1.12]
+    },
+    "bubble_watch": {
+      "desc": "倒计时气泡的「再看」两字(进行中)。只裁字形不裁数字:MM:SS 一直在变",
+      "source": "看商品视频得现金_.png",
+      "box": [930, 330, 1030, 372],
+      "threshold": 0.65,
+      "scales": [0.85, 1.0, 1.15, 1.3],
+      "mode": "lc"
+    },
+    "bubble_done": {
+      "desc": "气泡的「任务完成」状态(两行字)",
+      "source": "倒计时任务完成.png",
+      "box": [930, 296, 1042, 380],
+      "threshold": 0.65,
+      "scales": [0.85, 1.0, 1.15, 1.3],
+      "mode": "lc"
+    },
+    "bubble_cooldown": {
+      "desc": "气泡变成「MM:SS 后领」= 这个模块今天做完了(真机确认:此时右上角显示「后领」,点进去也没用了,应返回金币页)",
+      "source": "直播_后领冷却.png",
+      "box": [925, 380, 1000, 416],
+      "threshold": 0.62,
+      "scales": [0.85, 1.0, 1.15, 1.3],
+      "mode": "lc"
+    },
+    "bubble_cooldown2": {
+      "desc": "同上,商品视频页领取成功后右上角圆牌上的「后领」(底色和直播间不同,所以单独一张)",
+      "source": "商品视频_领取成功.png",
+      "box": [930, 378, 1010, 418],
+      "threshold": 0.62,
+      "scales": [0.85, 1.0, 1.15, 1.3],
+      "mode": "lc"
+    },
+    "coin_entry": {
+      "desc": "主信息流右上角圆环里的「金币」两字(点它进金币页)。只裁这两个字:上面的金币数字每次都在变,裁进去分数会掉到 0.5",
+      "source": "实时推荐页.png",
+      "box": [912, 338, 1012, 394],
+      "threshold": 0.70,
+      "scales": [0.90, 0.95, 1.0, 1.05, 1.1]
+    },
+    "water_popup_title": {
+      "desc": "喝水弹窗标题「周末加赠营养牛奶」",
+      "source": "周末喝水翻倍赚钱.jpg",
+      "box": [270, 525, 860, 612],
+      "threshold": 0.70,
+      "scales": [0.9, 1.0, 1.1]
+    },
+    "water_checkin_btn": {
+      "desc": "喝水弹窗底部按钮「喝水打卡领1500金币」",
+      "source": "周末喝水翻倍赚钱.jpg",
+      "box": [210, 1280, 910, 1400],
+      "threshold": 0.70,
+      "scales": [0.9, 1.0, 1.1]
+    }
+  }
+}
