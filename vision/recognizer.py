@@ -342,13 +342,20 @@ class Recognizer:
         rows = {}
         row_mods = {}          # 模板名 -> 模块名
         for mod, tpls in MODULES.items():
+            best = None
             for tpl in tpls:
                 hit = hits.get(tpl) if tpl in nn_hits else (
                     find(tpl, "content") if need(tpl) else None)
                 if hit is not None and hit.bottom <= h * ROW_SAFE_BOTTOM:
-                    rows[tpl] = hit
-                    row_mods[tpl] = mod
-                    break          # 同一模块认到一个变体就够
+                    # 同一模块挂着多个模板变体(旧 UI / 新 UI 各一套)。
+                    # 取分数最高的那个,而不是顺序上第一个命中的:旧变体只要
+                    # 勉强蹭到阈值就会把更准的新变体挡在门外(换分辨率时尤其
+                    # 危险,0.855 的旧模板会先 break,1.000 的新模板根本没机会)。
+                    if best is None or hit.score > best.score:
+                        best = hit
+            if best is not None:
+                rows[best.name] = best
+                row_mods[best.name] = mod
 
         if water_title is not None:
             hits["water_popup_title"] = water_title
@@ -392,12 +399,15 @@ class Recognizer:
         rows = {}
         row_mods = {}          # 模板名 -> 模块名
         for mod, tpls in MODULES.items():
+            best = None
             for tpl in tpls:
                 hit = hits.get(tpl)
                 if hit is not None and hit.bottom <= h * ROW_SAFE_BOTTOM:
-                    rows[tpl] = hit
-                    row_mods[tpl] = mod
-                    break          # 同一模块认到一个变体就够
+                    if best is None or hit.score > best.score:
+                        best = hit
+            if best is not None:
+                rows[best.name] = best
+                row_mods[best.name] = mod
         # 露了一半的行标题不参与判定(点歪风险),也不留在 hits 里误导调试图
         for tpl in list(hits):
             if tpl in ROW_TPLS and tpl not in rows:
