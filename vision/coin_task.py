@@ -58,7 +58,9 @@ DEFAULTS = {
 MODULE_NAMES = {
     "shop_video": "看商品视频得现金",
     "live": "看直播赚现金",
-    "water": "周末喝水翻倍赚钱",
+    # 这个名字只用来打日志。拼多多 8.31 把它改成了「每日8次喝水赚钱」,
+    # 认行靠模板(新旧两套),日志上写个中性的名字,免得看日志时对不上屏幕。
+    "water": "喝水赚钱",
 }
 
 # 底部导航栏「多多视频」标签图标的位置(占画布的比例,实测 1080×1920 下
@@ -206,7 +208,13 @@ class CoinTask:
                 continue
             count += 1
             self.on_status("挂机刷视频(第 %d 条)" % count)
-            self.swipe_keepalive()
+            if page == "unknown":
+                # 落到活动落地页/商品页上了:先给一次满屏上滑("上滑继续看视频"),
+                # 再按返回(返回在上面的待机/上一轮循环里处理)
+                self.log("挂机:这页认不出来,上滑继续看视频")
+                self.fling_up()
+            else:
+                self.swipe_keepalive()
             pause = base + random.uniform(-0.5, 0.5)
             self.log("挂机:第 %d 次滑动,%.1f 秒后继续" % (count, pause))
             self._sleep(pause)
@@ -255,6 +263,18 @@ class CoinTask:
                           int(w * x_frac), int(h * y2_frac),
                           duration or self.cfg["swipe_duration"])
 
+    def fling_up(self, duration=380):
+        """满屏一甩:从屏幕底部甩到顶部。
+
+        活动落地页(「三单福利·首单减50元」这种)底部写着「上滑继续看视频」,
+        金币页里那种 18% 的小滑动它根本不认 —— 页面纹丝不动,看着就像卡住了。
+        用户要求(2026-11-16):"这个界面你需要执行上滑操作,而不是点击领取五十元"。
+        """
+        canvas = self._ensure_canvas()
+        w, h = canvas.dev_w, canvas.dev_h
+        self.screen.swipe(int(w * 0.5), int(h * 0.85),
+                          int(w * 0.5), int(h * 0.15), duration)
+
     def swipe_keepalive(self):
         """倒计时页面上的"续命"动作:甩到下一个视频。
 
@@ -271,6 +291,28 @@ class CoinTask:
                           max(self.cfg["swipe_duration"], 350))
 
     # -- 页面归位 ------------------------------------------------------
+    def _recover_unknown(self, why=""):
+        """认不出来的页面上的兜底:先上滑,再返回。
+
+        真机(User 2026-11-16)要求:碰到「三单福利」这类中间页,页面底下就写着
+        「上滑继续看视频」—— 先上滑往往直接就进了真正的视频页;上滑还认不出来,
+        再按返回退回上一层,别在那儿干等到超时。
+
+        返回兜底之后的 View(可能仍然是 unknown / None)。
+        """
+        if why:
+            self.log("  %s,先上滑试试" % why)
+        # 用满屏一甩,不用金币页里那种小滑动:落地页只认完整的上滑手势
+        self.fling_up()
+        self._sleep(1.5)
+        view = self.view(settled=False)
+        if view is not None and view.page != "unknown":
+            return view
+        self.log("  还是认不出来,按返回")
+        self.screen.back()
+        self._sleep(1.2)
+        return self.view(settled=False)
+
     def _in_target_app(self, pkg):
         """前台是不是目标 App。取不到前台信息时返回 True(宁可继续,不空转)。"""
         try:
@@ -405,10 +447,11 @@ class CoinTask:
                     self.log("主信息流 → 点金币入口进金币页")
                     self.tap_canvas(entry.cx, entry.cy)
             elif view.page == "unknown" and i == 0:
-                # "看不懂"有可能是金币页滚到了没有已知行的位置,先滚回来试试;
-                # 但只试一次 —— 真机上多数"看不懂"是直播间/商品页,一直滚是死循环。
-                self.log("  看不懂这页,先滚一下找找")
-                self.swipe_down()
+                # 认不出来的多半是「三单福利」这类活动落地页,页面底下写着
+                # 「上滑继续看视频」—— 先满屏上滑一次,能回到视频流最好;
+                # 还认不出来就下一轮按返回(用户要求:先上滑,再返回)。
+                self.log("  看不懂这页,先上滑试试")
+                self.fling_up()
             else:
                 self.log("  按返回")
                 self.screen.back()
@@ -566,8 +609,10 @@ class CoinTask:
         """视频/直播:盯气泡,有倒计时才滑,完成后再等 done_delay 秒返回。"""
         label = MODULE_NAMES.get(module, module)
         # 1) 等页面出来、气泡出现
-        deadline = time.time() + self.cfg["page_wait"]
+        started = time.time()
+        deadline = started + self.cfg["page_wait"]
         view = None
+        recovered = False
         while time.time() < deadline:
             self._check_stop()
             self._guard_app()
@@ -581,6 +626,17 @@ class CoinTask:
             if view.page == "coin_page":
                 self.log("没有进入「%s」页面,可能今天做完了" % label)
                 return "skip"
+            if view.page == "unknown" and not recovered and time.time() > started + 3:
+                # 点「去逛逛」之后先到的是中间页(如「三单福利」),气泡还没出来。
+                # 这种页面上滑就能继续看视频,先上滑;不行再返回(用户要求)。
+                recovered = True
+                view = self._recover_unknown("这页认不出来") or view
+                if view.page == "task":
+                    break
+                if view.page == "coin_page":
+                    self.log("上滑/返回之后回到了金币页,这一行当成做过了")
+                    return "skip"
+                continue
             self._sleep(1.5)
         if view is None or view.page != "task":
             # 点进去一直没出现气泡 ⇒ 这一行今天已经领过了(真机上见过这种:
@@ -679,12 +735,10 @@ class CoinTask:
                 else:
                     if self._seen_task:
                         # 见过气泡之后掉到看不懂的界面:可能只是被活动弹窗盖住,
-                        # 也可能你已经手动退出去逛别的了。按一次返回试试:
-                        # 能回到任务页/金币页就是弹窗,继续盯;否则当作你走了。
-                        self.log("界面变成 %s,按一次返回看看还是不是刚才那页" % view.page)
-                        self.screen.back()
-                        self._sleep(1.2)
-                        probe = self.view(settled=False)
+                        # 也可能你已经手动退出去逛别的了。先上滑、再按一次返回试试:
+                        # 能回到任务页/金币页就继续盯;否则当作你走了。
+                        self.log("界面变成 %s" % view.page)
+                        probe = self._recover_unknown("界面看不懂")
                         if probe is not None and probe.page in ("task", "coin_page"):
                             continue
                         self.log("返回后也不在任务页了,当作你手动退出,停止本轮")

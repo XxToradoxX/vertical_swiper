@@ -31,8 +31,14 @@ ROI = {
     # 视频页右上角的倒计时气泡。气泡的纵向位置随页面而变(商品页贴着状态栏,
     # 直播间偏下),所以这块 ROI 特意开得很大,靠字形匹配去定位,不靠位置。
     "bubble": (0.60, 0.080, 1.00, 0.500),
-    # 主信息流右上角「金币」入口
-    "coin_entry": (0.68, 0.150, 1.00, 0.290),
+    # 主信息流右上角「金币」入口。
+    # 上沿原来定在 0.150,结果 21:9 的手机(Xperia 1,1096x2560)翻车:那块屏幕
+    # 更长,入口圆环被顶到画布 y≈225,整块落在 ROI 外面,信息流直接被判成"无法识别"。
+    # 再往下踩一个坑(2026-11-16 真机):带「直播/关注/短剧/推荐」标签栏的那版信息流,
+    # 圆环又比别的高一截 —— 设备 y≈150..280,画布 y≈112..210,连 0.100 都不够。
+    # 干脆放到 0.060(设备 y≈154 起),两种排版都罩住;模板要 0.72 才算命中,
+    # 往上放宽一点不会误判。
+    "coin_entry": (0.60, 0.060, 1.00, 0.360),
     # 喝水弹窗标题
     "water_title": (0.15, 0.235, 0.92, 0.345),
     # 喝水弹窗底部大按钮
@@ -47,12 +53,21 @@ ROW_TAP_X = 925
 ROW_SAFE_BOTTOM = 0.955
 
 # 一个模块可能有好几种标题写法 —— 拼多多会改文案(「看直播赚现金」后来变成了
-# 「去直播间下单」)。所以每个模块给一组候选模板,任意一个命中就算看到这一行。
+# 「去直播间下单」,8.31 又把「周末喝水翻倍赚钱」改成了「每日8次喝水赚钱」)。
+# 所以每个模块给一组候选模板,任意一个命中就算看到这一行。
+# 带 _new 后缀的是拼多多 8.31 改版后的字形(字号/字距都变了,旧模板在那些
+# 屏幕上只有 0.49~0.86,过不了 0.85 的阈值),两台手机的截图各标一套。
 MODULES = {
-    "shop_video": ("row_shop_video",),
-    "water": ("row_water",),
-    "live": ("row_live", "row_live2"),
+    "shop_video": ("row_shop_video", "row_shop_video_new"),
+    "water": ("row_water", "row_water_new"),
+    "live": ("row_live", "row_live2", "row_live_new"),
 }
+
+# 页面级锚点也都有"新旧两版字形",按候选列表依次试,取分最高的那个
+PAGE_HEADERS = ("page_coin", "page_coin_new")
+COIN_ENTRIES = ("coin_entry", "coin_entry_new")
+WATER_TITLES = ("water_popup_title", "water_popup_title_new")
+WATER_BTNS = ("water_checkin_btn", "water_checkin_btn_new")
 
 # 模板名 -> 模块名(反向索引;判定"这行露没露全"时用)
 ROW_TPLS = {tpl: mod for mod, tpls in MODULES.items() for tpl in tpls}
@@ -257,12 +272,15 @@ class Recognizer:
             if rows:
                 return True
         bubble = max((hits[t].score for t in
-                      ("bubble_watch", "bubble_done", "bubble_cooldown",
-                       "bubble_cooldown2") if t in hits), default=0.0)
+                      ("bubble_watch", "bubble_watch_new", "bubble_done",
+                       "bubble_done_new", "bubble_cooldown",
+                       "bubble_cooldown_new", "bubble_cooldown2")
+                      if t in hits), default=0.0)
         if bubble >= page_thr:
             return True
-        entry = hits.get("coin_entry")
-        if entry is not None and entry.score >= page_thr:
+        entry = max((hits[t].score for t in COIN_ENTRIES if t in hits),
+                    default=0.0)
+        if entry >= page_thr:
             return True
         return False
 
@@ -289,6 +307,15 @@ class Recognizer:
             return match(prepped[mode], self.templates, name,
                          roi=self._roi(ROI[roi_key], w, h), mode=mode, prepped=True)
 
+        def find_best(names, roi_key):
+            """一组候选模板(同一控件的新旧字形)里取分最高的那个。"""
+            best = None
+            for nm in names:
+                hit = hits.get(nm) if nm in nn_hits else find(nm, roi_key)
+                if hit is not None and (best is None or hit.score > best.score):
+                    best = hit
+            return best
+
         # 先看神经网络有没有给出结论:它够确定就直接用(12 毫秒),否则**整帧**交给
         # 模板匹配(0.8 秒)。两边不混用:混用会让"按钮颜色"这类按坐标取样的
         # 判据找不到地方(踩过:NN 给的行框和模板的不一样,冷却就判不出来)。
@@ -303,20 +330,14 @@ class Recognizer:
 
         bubble_hit = None
         bubble_state = None
-        for cand, state in (("bubble_watch", "watch"),
-                            ("bubble_done", "done"),
-                            ("bubble_cooldown", "cooldown"),
-                            ("bubble_cooldown2", "cooldown")):
+        for cand, state in self.BUBBLE_STATES:
             hit = hits.get(cand) if cand in nn_hits else (find(cand, "bubble") if need(cand) else None)
             if hit is not None and (bubble_hit is None or hit.score > bubble_hit.score):
                 bubble_hit, bubble_state = hit, state
 
-        water_title = hits.get("water_popup_title") or (
-            find("water_popup_title", "water_title") if need("water_popup_title") else None)
-        header = hits.get("page_coin") or (
-            find("page_coin", "coin_header") if need("page_coin") else None)
-        entry = hits.get("coin_entry") or (
-            find("coin_entry", "coin_entry") if need("coin_entry") else None)
+        water_title = find_best(WATER_TITLES, "water_title")
+        header = find_best(PAGE_HEADERS, "coin_header")
+        entry = find_best(COIN_ENTRIES, "coin_entry")
 
         rows = {}
         row_mods = {}          # 模板名 -> 模块名
@@ -332,7 +353,7 @@ class Recognizer:
         if water_title is not None:
             hits["water_popup_title"] = water_title
             if "water_checkin_btn" not in hits:
-                btn = find("water_checkin_btn", "water_btn")
+                btn = find_best(WATER_BTNS, "water_btn")
                 if btn is not None:
                     hits["water_checkin_btn"] = btn
         if header is not None:
@@ -346,8 +367,11 @@ class Recognizer:
 
     # -- 判定 ----------------------------------------------------------
     BUBBLE_STATES = (("bubble_watch", "watch"),
+                     ("bubble_watch_new", "watch"),
                      ("bubble_done", "done"),
+                     ("bubble_done_new", "done"),
                      ("bubble_cooldown", "cooldown"),
+                     ("bubble_cooldown_new", "cooldown"),
                      ("bubble_cooldown2", "cooldown"))
 
     def _decide(self, hits, canvas_img):

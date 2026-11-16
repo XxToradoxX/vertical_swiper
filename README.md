@@ -177,7 +177,7 @@ python -m venv --system-site-packages venv_train
 .\venv_train\Scripts\python.exe nn\export.py
 
 # 对比两条路的准确率(含"位置偏移"压力测试)
-.\venv\Scripts\python.exe tools\bench_nn.py --stress 12
+python tools\bench_nn.py --stress 12
 ```
 
 **踩过的两个坑**(写在这里省得下次再踩)
@@ -230,25 +230,40 @@ python -m venv --system-site-packages venv_train
 
 ### 按你自己的机型重标模板
 
-模板是按你手机的截图裁的。换手机、或者拼多多改版导致识不准时:
+模板是按你手机的截图裁的。换手机、或者拼多多改版导致识不准时(下面命令都在 `conda activate Scroller` 之后执行):
 
 1. 截一张新图放进 `shoot\`,用 `tools\template_spec.json` 里对应的 `source` 指过去
 2. 调那一项的 `box`(1080×1920 画布坐标,`[x1,y1,x2,y2]`)
 3. 重新生成 + 自检:
 
 ```powershell
-venv\Scripts\python.exe tools\make_templates.py --out venv\_stage\templates --context --review debug\templates_context.png
-Copy-Item venv\_stage\templates\* vision\templates\ -Force
-venv\Scripts\python.exe tools\selftest.py -v --save
+python tools\make_templates.py --out _stage\templates --context --review debug\templates_context.png
+Copy-Item _stage\templates\* vision\templates\ -Force
+python tools\selftest.py -v --save
 ```
 
 `debug\templates_context.png` 会把绿框套在原截图上,框歪了一眼就能看出来;`selftest.py` 会打一张"模板 × 截图"的打分矩阵,对角线应该又高又干净,非对角线应该接近 0。
 
+### 换机实测:21:9 手机 + 拼多多 8.31(2026-11)
+
+真机是 Sony Xperia 1(1096×2560,21:9)。换过去之后直接"认不出来",排查下来是**两件事叠在一起**:
+
+| 现象 | 根因 | 处理 |
+| --- | --- | --- |
+| 主信息流整页"无法识别" | 21:9 上「金币」圆环被顶到画布 y≈112~210,整块落在 `coin_entry` ROI(原来 y 0.150 起)之外 | ROI 上沿放到 `0.060`;又补了 `coin_entry_new` 模板(8.31 的字号变了) |
+| 金币页的行认不出 | 8.31 换了字体排版,同样 8 个字在画布上宽 328、旧模板只有 224,多尺度扫到 0.816 也上不去 | 按新机重裁 `page_coin_new` / `row_*_new` / `water_*_new` |
+| 直播间气泡认不出 | 新版气泡是"深色圆盘 + 白字",位置从画布 y≈338 挪到 y≈225 | 新增 `bubble_watch_new`(再看)、`bubble_done_new`(任务完成)、`bubble_cooldown_new`(后领) |
+| 列表文案改名 | 「看商品视频得现金」→「看商品视频赚现金」、「周末喝水翻倍赚钱」→「每日8次喝水赚钱」 | 模板按**不变的前缀**裁(「看商品视频」「喝水」),日志里模块名写成中性的 |
+
+**多尺度救不回来的情况**:同一个字号变了、字距也变了,就不是缩放问题,只能重裁模板。判断方法很土但很快 —— 拿模板和新截图里同一行的字形宽度量一下,差 1.3 倍以上就是换排版了。
+
+**认不出的中间页先上滑、再返回**(用户 2026-11-16 要求):点「去逛逛」之后有时先到「三单福利·首单减50元」这种活动落地页,页面底下就写着"上滑继续看视频"。这种页面**不要点「领取50元」**,给一次满屏上滑(`fling_up`:画布 0.85 → 0.15,380ms)就能进到真正的视频页;上滑还认不出来,才按返回。金币页里那种 18% 的小滑动它不认,会看着像"卡住"。
+
 ### 连上手机先跑这个
 
 ```powershell
-venv\Scripts\python.exe tools\probe.py            # 截一帧 → 识别 → 打印结论
-venv\Scripts\python.exe tools\probe.py --repeat 5 # 边操作手机边连看 5 次
+python tools\probe.py            # 截一帧 → 识别 → 打印结论
+python tools\probe.py --repeat 5 # 边操作手机边连看 5 次
 ```
 
 它会把命中框画在截图上存到 `debug\probe_<时间>.png`:框画歪了改 `box`,框对但没命中就降 `threshold`。
