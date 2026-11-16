@@ -575,7 +575,8 @@ class CoinRunner:
                 os.makedirs(debug_dir, exist_ok=True)
             except OSError:
                 debug_dir = None
-        return CoinTask(screen, recognizer=Recognizer(), cfg=task_cfg, log=self.log,
+        return CoinTask(screen, recognizer=Recognizer(use_nn=bool(self.cfg.coin_nn)),
+                        cfg=task_cfg, log=self.log,
                         should_stop=self._stop.is_set,
                         on_status=self._on_status, debug_dir=debug_dir)
 

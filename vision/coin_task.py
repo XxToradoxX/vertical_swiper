@@ -110,6 +110,7 @@ class CoinTask:
         self._feed_img = None          # peek_feed() 截下的那一帧,能给完整识别复用
         self._feed_score = None
         self._feed_ms = 0.0
+        self._cap_ms = 0.0             # 最近一次截图花了多久(日志里说明"为什么比设定慢")
 
     # -- 基础动作 ------------------------------------------------------
     def _check_stop(self):
@@ -134,7 +135,9 @@ class CoinTask:
     def view(self, settled=False):
         """截一帧 → 归一化到画布 → 识别。"""
         canvas = self._ensure_canvas()
+        t0 = time.time()
         raw = self.screen.capture_settled() if settled else self.screen.capture()
+        self._cap_ms = (time.time() - t0) * 1000.0
         if raw is None:
             return None
         return self.classify_image(canvas.normalize(raw))
@@ -180,7 +183,9 @@ class CoinTask:
         chk = self._feed_checker()
         if not chk.available():
             return None, None
+        t0 = time.time()
         raw = self.screen.capture()
+        self._cap_ms = (time.time() - t0) * 1000.0
         if raw is None:
             return None, None
         img = canvas.normalize(raw)
@@ -228,6 +233,7 @@ class CoinTask:
         """
         base = float(self.cfg.get("idle_interval") or 3.5)
         self.log("=== 回到视频流挂机(每 %.1f 秒滑一次,Ctrl+C / 点停止结束)===" % base)
+        self.log_backends()
         try:
             self._idle_feed_loop(base)
         except StopRequested:
@@ -260,7 +266,11 @@ class CoinTask:
         count = 0
         while True:
             self._check_stop()
-            self._guard_app()
+            # 前台检查要一次 adb dumpsys(0.3~0.4 s),不必每轮都做:
+            # 隔一轮看一次,10 秒内必然发现"手机被拿走了"。
+            if count % 2 == 0:
+                self._guard_app()
+            t0 = time.time()
             # 每一轮都看一眼界面:挂机时你可能自己点回二级菜单去了,
             # 这时候再滑就是在往你的菜单里甩手指(会滚列表、误触)。
             #
@@ -289,16 +299,45 @@ class CoinTask:
                 self.fling_up()
             else:
                 self.swipe_keepalive()
-            pause = max(0.2, base + random.uniform(-0.5, 0.5))
-            self.log("挂机:第 %d 次滑动,%.1f 秒后继续%s"
-                     % (count, pause, self._feed_note()))
+            # 排期按"墙钟"算:截图 + 判页 + 滑动本身就要 1.5~2 s,如果直接
+            # sleep(3.5),真实间隔就变成 5 s 以上 —— 用户看到的"远大于 3 秒"。
+            worked = time.time() - t0
+            pause = max(0.2, base + random.uniform(-0.5, 0.5) - worked)
+            self.log("挂机:第 %d 次滑动,约 %.1f 秒一条%s"
+                     % (count, pause + worked, self._feed_note()))
+            if count == 1:
+                self.log("挂机:一轮耗时 %.2f s(截图 %.2f s + 判页 %.0f ms + 滑动),"
+                         "剩下的 %.1f s 是间隔" % (worked, self._cap_ms / 1000.0,
+                                                self._feed_ms, pause))
             self._sleep(pause)
 
     def _feed_note(self):
-        """日志尾巴:这一条判页花了多少、分数多少(判页网络不可用时为空)。"""
+        """日志尾巴:这一条判页花了多少、分数多少、截图多久(判页不可用时只留截图)。"""
         if self._feed_score is None:
+            if self._cap_ms > 0:
+                return "(截图 %.2f s)" % (self._cap_ms / 1000.0)
             return ""
-        return "(判页 %.2f,%.1f ms)" % (self._feed_score, self._feed_ms)
+        return "(判页 %.2f,%.1f ms,截图 %.2f s)" % (
+            self._feed_score, self._feed_ms, self._cap_ms / 1000.0)
+
+    def backend_lines(self):
+        """启动时打几行:每条识别路径跑在 CPU 还是 GPU 上(用户要求看得见)。"""
+        out = ["整帧识别: %s" % self.rec.backend_label()]
+        if self.cfg.get("feed_check", True):
+            chk = self._feed_checker()
+            thr = float(self.cfg.get("feed_thr") or 0.40)
+            out.append("判页小网络: %s,阈值 %.2f" % (chk.describe(), thr))
+        else:
+            out.append("判页小网络: 已关闭(--no-feed-check),每轮跑整帧识别")
+        return out
+
+    def log_backends(self):
+        """backend_lines() 只打一次:挂机开始和金币任务开始都会走到这里。"""
+        if getattr(self, "_backends_logged", False):
+            return
+        self._backends_logged = True
+        for line in self.backend_lines():
+            self.log(line)
 
     def _idle_standby(self, page):
         """挂机时的待机:你已经点进了别的页面,就先不滑,等回到视频流。
@@ -865,6 +904,7 @@ class CoinTask:
             self.log("=== 多多视频挂机开始:只刷视频,不做金币任务 ===")
         else:
             self.log("=== 多多视频金币任务开始,超时 %d 分钟 ===" % cfg["max_minutes"])
+        self.log_backends()
         dead_line = time.time() + cfg["max_minutes"] * 60
         attempts = {m: 0 for m in cfg["modules"]}
         results = {}

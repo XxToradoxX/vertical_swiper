@@ -213,6 +213,16 @@ class Recognizer:
         except Exception:
             return False
 
+    def backend_label(self):
+        """日志用:整帧识别这一路到底跑什么、跑在 CPU 还是 GPU。"""
+        if not self.use_nn:
+            return "模板匹配 CPU(cv2 %s)" % cv2.__version__
+        try:
+            nn = self.net.describe()
+        except Exception:              # noqa: BLE001 - 模型坏了也要能继续跑模板
+            nn = "神经网络不可用"
+        return "%s + 模板匹配 CPU(cv2 %s)" % (nn, cv2.__version__)
+
     def _hits_from_nn(self, canvas_img):
         """跑一次检测器,把结果变成和模板匹配同构的 hits 字典。
 

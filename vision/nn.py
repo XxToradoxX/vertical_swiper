@@ -44,6 +44,7 @@ class CoinNet(object):
         self._net = None
         self._tried = False
         self._ms = 0.0
+        self.backend = None            # "CPU(cv2.dnn)" / "GPU(cv2.dnn CUDA)"
 
     def available(self):
         if not self._tried:
@@ -51,9 +52,16 @@ class CoinNet(object):
             if os.path.exists(self.path):
                 try:
                     self._net = cv2.dnn.readNetFromONNX(self.path)
+                    self.backend = _pick_backend(self._net)
                 except Exception:
                     self._net = None
         return self._net is not None
+
+    def describe(self):
+        """日志用:这条识别路径跑在 CPU 还是 GPU 上。"""
+        if not self.available():
+            return "不可用(没有 %s)" % os.path.basename(self.path)
+        return "ONNX / cv2.dnn %s" % self.backend
 
     # ---------------------------------------------------------------- 推理
     def _blob(self, canvas_img):
@@ -83,6 +91,31 @@ class CoinNet(object):
     @property
     def last_ms(self):
         return self._ms
+
+
+def cuda_devices():
+    """本机 cv2 能看到几块 CUDA 显卡(普通 headless wheel 是 0)。"""
+    try:
+        return int(cv2.cuda.getCudaEnabledDeviceCount())
+    except Exception:
+        return 0
+
+
+def _pick_backend(net):
+    """有 CUDA 版 cv2 就上 GPU,否则老老实实 CPU;返回日志用的名字。"""
+    if cuda_devices() <= 0:
+        return "CPU(无 CUDA 版 OpenCV)"
+    try:
+        net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+        net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
+        return "GPU(CUDA)"
+    except Exception:
+        try:
+            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        except Exception:
+            pass
+        return "CPU(CUDA 初始化失败)"
 
 
 def decode(hm, cls, wh, off, thr=0.35, topk=40):

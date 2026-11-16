@@ -150,3 +150,17 @@ class FeedCheck(object):
     @property
     def last_ms(self):
         return self._ms
+
+    def describe(self):
+        """给日志用的一句话:跑在哪儿、什么后端。"""
+        if not self.available():
+            return "不可用"
+        if self.backend == "onnx":
+            return "ONNX / cv2.dnn(CPU,%s)" % cv2.__version__
+        if self.backend == "onnx:cuda":
+            return "ONNX / cv2.dnn(CUDA)"
+        if self.backend and self.backend.startswith("torch:"):
+            dev = self.backend.split(":", 1)[1]
+            where = "GPU" if dev.startswith("cuda") else "CPU"
+            return "torch %s(%s)" % (self._torch.__version__, where + " " + dev)
+        return str(self.backend or "未知")
