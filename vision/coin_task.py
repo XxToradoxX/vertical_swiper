@@ -150,7 +150,9 @@ class CoinTask:
         """
         if view is None or getattr(self, "_last_img", None) is None:
             return None, None
-        hit = (view.hits or {}).get("bubble_watch")
+        hits = view.hits or {}
+        # 新版气泡("再看"两个字)和旧版是两张模板,读数字时哪张命中都认
+        hit = hits.get("bubble_watch") or hits.get("bubble_watch_new")
         if hit is None:
             return None, None
         if self._digits is None:
