@@ -164,7 +164,7 @@ class Config:
     launch_app: bool = False           # 开始时把目标应用拉到前台
     guard_app: bool = False            # 仅当目标应用在前台时才上滑
     # ---- 识别模式(多多视频金币任务)----
-    mode: str = "swipe"                # swipe = 纯定时上滑, coins = 金币任务
+    mode: str = "swipe"                # swipe = 纯定时上滑, coins = 金币任务, idle = 多多视频挂机
     coin_modules: str = "shop_video,live,water"   # 要做的模块,逗号分隔
     coin_max_minutes: int = 60         # 一轮最多跑多久
     coin_done_delay: int = 10          # 倒计时完成后等几秒再返回
@@ -560,6 +560,8 @@ class CoinRunner:
             "idle_after": bool(self.cfg.coin_idle),
             "idle_interval": max(1.0, float(self.cfg.coin_idle_interval)),
             "nn": bool(self.cfg.coin_nn),
+            # 挂机模式:不做金币任务,进去就直接刷视频
+            "idle_only": self.cfg.mode == "idle",
         }
         debug_dir = None
         if self.cfg.coin_debug:
@@ -642,7 +644,10 @@ def run_coin_cli(cfg):
 
     runner = CoinRunner(cfg, log=log)
     log("设备: %s" % (cfg.serial or "自动选择"))
-    log("模块: %s" % cfg.coin_modules)
+    if cfg.mode == "idle":
+        log("模式: 多多视频挂机(只刷视频,不做金币任务)")
+    else:
+        log("模块: %s" % cfg.coin_modules)
     log("日志文件: %s" % run_log.path)
     log("按 Ctrl+C 停止")
     if not runner.start():
@@ -853,7 +858,7 @@ def run_gui(cfg):
     # ---- 模式行
     moderow = ttk.Frame(root, padding=(12, 0, 12, 4))
     moderow.pack(fill="x")
-    mode_var = tk.StringVar(value="coins" if cfg.mode == "coins" else "swipe")
+    mode_var = tk.StringVar(value=cfg.mode if cfg.mode in ("coins", "idle") else "swipe")
     ttk.Label(moderow, text="模式:").pack(side="left")
     ttk.Radiobutton(moderow, text="纯滑动(定时上滑)", value="swipe",
                     variable=mode_var).pack(side="left", padx=(6, 4))
@@ -861,6 +866,10 @@ def run_gui(cfg):
     # 所以这一块整体放在一个子 Frame 里,目标应用不是拼多多时直接不显示。
     coin_opts = ttk.Frame(moderow)
     ttk.Radiobutton(coin_opts, text="多多视频金币任务(识别倒计时)", value="coins",
+                    variable=mode_var).pack(side="left", padx=(0, 12))
+    # 挂机:同一个识别模式,但不进金币页,直接退回视频流按间隔刷。
+    # 跟金币任务一样只对多多视频成立,所以放在同一个子 Frame 里一起显隐。
+    ttk.Radiobutton(coin_opts, text="多多视频挂机", value="idle",
                     variable=mode_var).pack(side="left", padx=(0, 10))
     coin_debug_var = tk.BooleanVar(value=cfg.coin_debug)
     ttk.Checkbutton(coin_opts, text="保存识别截图",
@@ -873,6 +882,10 @@ def run_gui(cfg):
             mode_hint.configure(
                 text="金币任务:自动进金币页 → 依次做 看商品视频 / 看直播 / 喝水打卡,"
                      "只在右上角有倒计时气泡时滑动;完成后等 %d 秒再返回。识别参数见 config.json。" % cfg.coin_done_delay)
+        elif mode_var.get() == "idle":
+            mode_hint.configure(
+                text="多多视频挂机:不进金币页、不做任务,直接退回视频流每 %.1f 秒滑一条,"
+                     "一直刷到你点停止。想顺手跑完金币任务请用左边的金币任务模式。" % cfg.coin_idle_interval)
         else:
             mode_hint.configure(text="纯滑动:按冷却时间定时上滑,不识别画面。")
 
@@ -884,8 +897,8 @@ def run_gui(cfg):
             coin_opts.pack(side="left")
         elif not want and managed:
             coin_opts.pack_forget()
-            if mode_var.get() == "coins":
-                # 切到别的 App 就别偷偷留着金币模式,否则点开始会去点拼多多的界面
+            if mode_var.get() in ("coins", "idle"):
+                # 切到别的 App 就别偷偷留着金币/挂机模式,否则点开始会去点拼多多的界面
                 mode_var.set("swipe")
                 put("目标应用不是多多视频,已切回纯滑动模式")
         refresh_mode_hint()
@@ -953,7 +966,7 @@ def run_gui(cfg):
             cfg.interval_max = max(cfg.interval_min, float(max_var.get()))
             cfg.duration_ms = int(max(80, min(1500, float(duration_var.get()))))
             cfg.keep_awake = bool(keep_awake_var.get())
-            cfg.mode = "coins" if mode_var.get() == "coins" else "swipe"
+            cfg.mode = mode_var.get() if mode_var.get() in ("coins", "idle") else "swipe"
             cfg.coin_debug = bool(coin_debug_var.get())
             pkg = app_map.get(app_var.get(), "")
             cfg.target_pkg = "" if pkg == "__custom__" else pkg
@@ -966,7 +979,7 @@ def run_gui(cfg):
 
     def engine():
         """当前模式对应的执行器。"""
-        return coin if mode_var.get() == "coins" else core
+        return coin if mode_var.get() in ("coins", "idle") else core
 
     def toggle():
         if engine().running:
@@ -1063,6 +1076,8 @@ def run_gui(cfg):
         eng = engine()
         if mode_var.get() == "coins":
             counter_lbl.configure(text="金币任务 · %s" % (eng.status or "就绪"))
+        elif mode_var.get() == "idle":
+            counter_lbl.configure(text="挂机 · %s" % (eng.status or "就绪"))
         else:
             counter_lbl.configure(text="已上滑 %d 次" % core.count)
         if eng.running and eng.next_at:
@@ -1085,7 +1100,8 @@ def run_gui(cfg):
         core.stop(quiet=True)
         coin.stop(quiet=True)
         run_log.close("关闭窗口:上滑 %d 次" % core.count
-                      if cfg.mode != "coins" else "关闭窗口:金币任务")
+                      if cfg.mode not in ("coins", "idle")
+                      else "关闭窗口:%s" % ("多多视频挂机" if cfg.mode == "idle" else "金币任务"))
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)
@@ -1119,9 +1135,10 @@ def main():
     parser.add_argument("--app", type=str,
                         help="目标应用: douyin / pdd / bili / kuaishou / xhs / 包名;默认保持当前界面")
     parser.add_argument("--guard", action="store_true", help="仅当目标应用在前台时才上滑")
-    parser.add_argument("--mode", choices=["swipe", "coins"],
-                        help="swipe=定时上滑(默认)  coins=多多视频金币任务")
+    parser.add_argument("--mode", choices=["swipe", "coins", "idle"],
+                        help="swipe=定时上滑(默认)  coins=多多视频金币任务  idle=多多视频挂机(只刷视频)")
     parser.add_argument("--coins", action="store_true", help="等价于 --mode coins")
+    parser.add_argument("--idle", action="store_true", help="等价于 --mode idle(只刷视频,不做任务)")
     parser.add_argument("--modules", type=str,
                         help="金币任务要做的模块,逗号分隔: shop_video,live,water")
     parser.add_argument("--done-delay", type=int, dest="done_delay",
@@ -1148,6 +1165,8 @@ def main():
         cfg.mode = args.mode
     if args.coins:
         cfg.mode = "coins"
+    if getattr(args, "idle", False):
+        cfg.mode = "idle"
     if args.modules:
         cfg.coin_modules = args.modules
     if args.done_delay is not None:
@@ -1186,13 +1205,13 @@ def main():
         cfg.serial = args.serial
     cfg.adb_path = find_adb(cfg.adb_path)
 
-    # 金币任务的模板和坐标全是拼多多的,别的 App 上跑只会瞎点。
-    if cfg.mode == "coins" and cfg.target_pkg != COIN_APP_PKG:
-        print("注意:金币任务只支持多多视频(%s),目标应用是 %s,已改为纯滑动模式。"
+    # 金币任务/挂机模式的模板和坐标全是拼多多的,别的 App 上跑只会瞎点。
+    if cfg.mode in ("coins", "idle") and cfg.target_pkg != COIN_APP_PKG:
+        print("注意:金币任务和挂机只支持多多视频(%s),目标应用是 %s,已改为纯滑动模式。"
               % (COIN_APP_PKG, cfg.target_pkg or "不限制"), file=sys.stderr)
         cfg.mode = "swipe"
 
-    if (args.cli or args.dry_run) and cfg.mode == "coins" and not args.dry_run:
+    if (args.cli or args.dry_run) and cfg.mode in ("coins", "idle") and not args.dry_run:
         sys.exit(run_coin_cli(cfg))
     if args.cli or args.dry_run:
         sys.exit(run_cli(cfg, args.count, args.dry_run))

@@ -768,7 +768,10 @@ class CoinTask:
 
     def _run_once(self):
         cfg = self.cfg
-        self.log("=== 多多视频金币任务开始,超时 %d 分钟 ===" % cfg["max_minutes"])
+        if cfg.get("idle_only"):
+            self.log("=== 多多视频挂机开始:只刷视频,不做金币任务 ===")
+        else:
+            self.log("=== 多多视频金币任务开始,超时 %d 分钟 ===" % cfg["max_minutes"])
         dead_line = time.time() + cfg["max_minutes"] * 60
         attempts = {m: 0 for m in cfg["modules"]}
         results = {}
@@ -780,6 +783,13 @@ class CoinTask:
         if pkg:
             self.ensure_app(pkg, launch=bool(cfg.get("launch_app", True)))
         self.ensure_video_tab()
+
+        # 挂机模式(GUI 上单独的「多多视频挂机」按钮):跳过金币任务,
+        # 直接退回视频流刷视频,一直刷到用户点停止。
+        if cfg.get("idle_only"):
+            self.on_status("挂机刷视频")
+            self.idle_feed()
+            return {}
 
         while time.time() < dead_line:
             self._check_stop()
