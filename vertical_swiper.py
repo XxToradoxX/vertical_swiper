@@ -175,6 +175,8 @@ class Config:
     coin_idle: bool = True             # 任务跑完后是否退回视频流挂机刷视频
     coin_idle_interval: float = 3.5    # 挂机时两次滑动的间隔(秒)
     coin_nn: bool = True               # 识别优先用训练出来的神经网络(模型在则生效)
+    coin_feed_check: bool = True       # 挂机时先用小网络(nn\feednet.onnx)判"还在信息流吗"
+    coin_feed_thr: float = 0.40        # 判页阈值:分数 ≥ 它就算信息流
 
 
 def load_config():
@@ -560,6 +562,9 @@ class CoinRunner:
             "idle_after": bool(self.cfg.coin_idle),
             "idle_interval": max(1.0, float(self.cfg.coin_idle_interval)),
             "nn": bool(self.cfg.coin_nn),
+            # 挂机判页:小网络每轮先看一眼"还在信息流吗"
+            "feed_check": bool(self.cfg.coin_feed_check),
+            "feed_thr": float(self.cfg.coin_feed_thr),
             # 挂机模式:不做金币任务,进去就直接刷视频
             "idle_only": self.cfg.mode == "idle",
         }
@@ -1151,6 +1156,10 @@ def main():
                         help="任务跑完后不挂机,直接结束")
     parser.add_argument("--no-nn", action="store_true", dest="no_nn",
                         help="不用训练出来的神经网络,只用模板匹配")
+    parser.add_argument("--no-feed-check", action="store_true", dest="no_feed_check",
+                        help="挂机时不用小网络判页,每轮都跑完整识别(慢)")
+    parser.add_argument("--feed-thr", type=float, dest="feed_thr",
+                        help="判页阈值 0~1,默认 0.40;分数不低于它就算还在信息流")
     parser.add_argument("--bench-nn", action="store_true", dest="bench_nn",
                         help="离线对比模板匹配和神经网络的识别准确率,然后退出")
     parser.add_argument("--max-minutes", type=int, dest="max_minutes",
@@ -1179,6 +1188,10 @@ def main():
         cfg.coin_idle = False
     if args.no_nn:
         cfg.coin_nn = False
+    if args.no_feed_check:
+        cfg.coin_feed_check = False
+    if args.feed_thr is not None:
+        cfg.coin_feed_thr = min(0.95, max(0.05, args.feed_thr))
     if args.bench_nn:
         os.execv(sys.executable, [sys.executable,
                                   os.path.join(APP_DIR, "tools", "bench_nn.py")])

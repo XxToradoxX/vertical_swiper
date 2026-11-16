@@ -22,11 +22,11 @@
 
 - Windows + Python 3(带 tkinter,官方安装包默认自带)
 - 电脑上已装 adb(Platform-Tools),手机已开启「USB 调试」或「无线调试」并授权
-- 本机已验证:adb 在 `D:\software\adb\platform-tools\adb.exe`,设备 `10.3.9.213:44273`(realme RMX3800,1264×2780)
+- 本机已验证:`D:\software\adb\platform-tools\adb.exe`;旧机 realme RMX3800(1264×2780)、新机 Sony J8110 / Xperia 1(1096×2560,21:9)两台都能用
 
 ### conda 环境 `Scroller`
 
-本机用 conda 环境 **`Scroller`**(Python 3.13)运行,图形界面和金币任务模式都跑在这个环境里:
+本机用 conda 环境 **`Scroller`**(Python 3.13)运行,图形界面和金币任务模式都跑在这个环境里。**环境目录挪过一次**,现在是 `E:\CondaData\envs\Scroller`(早期的 `C:\Users\<你>\.conda\envs\Scroller` 已不存在,`启动助手.bat` 里两处路径都跟着更新了):
 
 ```powershell
 conda activate Scroller
@@ -35,6 +35,17 @@ python vertical_swiper.py
 ```
 
 纯滑动模式只用标准库 + tkinter;金币任务模式的图像识别需要 `numpy` 和 `opencv-python-headless`。
+
+### 项目自带的 GPU 环境 `env_gpu`
+
+训练判页小网络、或者想用显卡推理时,直接拿它当解释器即可(它是从你的 conda 环境 `myTorch` 克隆出来的独立环境,torch 2.5.1+cu121 + cv2 + onnx):
+
+```powershell
+.\env_gpu\python.exe -c "import torch;print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+.\env_gpu\python.exe vertical_swiper.py --cli --mode idle
+```
+
+平时跑软件用 `Scroller` 就够了,两条路的识别结果一致(ONNX 与 torch 的输出误差 1.4e-06)。
 
 ## 启动
 
@@ -96,10 +107,12 @@ python vertical_swiper.py
 
 它跳过上面第 3~8 步,启动后确认 App 在前台、切到多多视频,就一直在视频流里按 `coin_idle_interval`(默认 3.5 秒)上滑,直到你点停止。三件事和纯滑动模式不一样:
 
-- **每一轮都看一眼画面**:你手动点进金币页、任务页或喝水弹窗时,它就**待机不动**(一次都不滑),等你回到视频流再自动接着刷 —— 免得在你正在看的页面上甩手指、误触
+- **每一轮都先"瞄一眼"**:用一个 7.6 万参数的小网络(`nn\feednet.onnx`)判断"还停在视频流吗",连截图约 1.4 秒、判页本身约 10 毫秒;判成信息流就直接滑,判成别的才跑一次完整识别,去分辨是金币页还是落地页。你手动点进金币页、任务页或喝水弹窗时,它就**待机不动**(一次都不滑),等你回到视频流再自动接着刷 —— 免得在你正在看的页面上甩手指、误触
 - **落到活动落地页**「三单福利·首单减50元」这类认不出来的页面,先满屏上滑一次(页面底部写着「上滑继续看视频」),还认不出来才按返回
 
-一轮识别 + 截图大约 5 秒,加上间隔,实际约 9~10 秒一条;想更快就把间隔调小,但识别那部分是固定开销。
+一轮就是"截图 1.4 秒 + 判页 0.01 秒 + 滑动 + 间隔",默认间隔 3.5 秒时实际约 5~6 秒一条(以前每轮都跑完整识别,是 9~17 秒一条)。瓶颈完全在 adb 截图,想再快也快不动了。
+
+判页开关和阈值:`coin_feed_check`(默认开)、`coin_feed_thr`(默认 0.40),命令行 `--no-feed-check` / `--feed-thr 0.4`。
 
 三条真机上学到的规矩:
 
@@ -214,6 +227,53 @@ python tools\bench_nn.py --stress 12
 
 "偏移"是把整帧画面缩放 s、平移 ±0.6s 之后重新识别 —— 模拟"控件没对齐/换了个分辨率的手机"。模板匹配靠像素对齐,错开 4% 就开始掉分;神经网络把这种错位当成训练时的常态,所以掉得慢。两者在原图上打平,所以默认两条路都留着:神经网络够确定时用它的(12 ms),不确定时整帧退回模板(0.8 s)。
 
+### 挂机判页的小网络(和项目自带的 GPU 环境)
+
+挂机时每轮只需要回答一个问题:"还停在信息流吗?"这件事不该动用 22 张模板的完整识别(0.8~3.6 秒),所以单独训了一个小网络 `nn\feednet.onnx`。
+
+| 项 | 值 |
+|---|---|
+| 输入 / 参数 | 128×228 BGR / **76,417** 个参数(4 层,深度可分离卷积 + GroupNorm) |
+| 输出 | 一个 sigmoid 分数:越大越像信息流 |
+| 训练数据 | `shoot\` + `debug\` 里的竖屏整图自动标注,67 张(信息流 11 / 其他 56) |
+| 训练结果 | 200 轮,第 30 轮验证集正确率 1.000;正样本最低分 **0.601**、负样本最高分 **0.046** |
+| 阈值 | 默认 **0.40**(`coin_feed_thr`),落在 0.601 与 0.046 之间偏安全的一侧 |
+| 速度 | 纯推理 CPU(cv2.dnn)2~3 ms;算上把整张截屏缩到 128×228,一帧 8~14 ms |
+| 文件大小 | `nn\feednet.onnx` 310 KB,依旧只靠 `cv2.dnn`,不需要装 torch |
+
+**项目自带的 GPU 环境 `env_gpu\`**
+
+用户机器上原本有 conda 环境 `myTorch`(torch 2.5.1+cu121、RTX 3060 Laptop 6GB),把它克隆了一份进项目,和用户的 conda 互不影响:
+
+```powershell
+conda create --prefix .\env_gpu --clone myTorch -y
+.\env_gpu\python.exe -m pip install opencv-python-headless onnx
+.\env_gpu\python.exe -c "import torch;print(torch.cuda.is_available())"   # True
+```
+
+它有两个用途:训练(这台机器是 NVIDIA,`nn\train_feed.py` 一路 AMP + CUDA)、以及**想用 GPU 跑软件时**直接把 `env_gpu\python.exe` 当解释器(判页会走 `torch:cuda` 后端)。平时用 `Scroller` 环境跑就行,那条路走 ONNX + CPU,行为完全一样。
+
+一个诚实的结论:**这个模型在 GPU 上没有更快**(单帧 CPU 2.7 ms / GPU 3.3 ms)。7.6 万参数的模型,单帧耗时几乎全是主机→显存拷贝和 kernel 启动,CPU 足够;GPU 的价值在以后把整帧识别(448×800 的 CenterNet)也搬过去。
+
+**重训 / 评测**
+
+```powershell
+# 1) 重新采集标注缓存(自动标注,信息流算正样本)
+python nn\feed_data.py --force        # --list 只列出会用到哪些图
+
+# 2) 训练 + 导出(用项目自带的 GPU 环境)
+.\env_gpu\python.exe nn\train_feed.py --epochs 200
+.\env_gpu\python.exe nn\export_feed.py     # 导出 ONNX,并与 torch 逐元素比对
+
+# 3) 两条后端各跑一遍全部样本:分数表 + 延迟 + 阈值扫描
+.\env_gpu\python.exe tools\bench_feed.py --list
+
+# 4) 真机补正样本(手机连上、停在视频流上)
+python tools\harvest_feed.py --count 40
+```
+
+`debug\sim_idle.py` 是离线演练:喂真截图给假的屏,检查"信息流 → 只滑"、"金币页 → 待机"、"认不出来的页面 → 上滑"三条路都对,不需要连手机。
+
 ### 你切走的时候它会不会停手
 
 会。程序在每一轮循环里(盯倒计时、找模块行、挂机刷视频)都会先确认**前台还是不是拼多多**,并且能从画面上分出三种"你已经不在看视频了"的样子:
@@ -295,6 +355,8 @@ python tools\probe.py --repeat 5 # 边操作手机边连看 5 次
 | `coin_swipe_duration` | — | 260 | 续命滑动的时长(ms) |
 | `coin_idle` | `--no-idle` | true | 任务跑完后是否退回视频流挂机刷视频 |
 | `coin_idle_interval` | `--idle-interval` | 3.5 | 挂机时两次滑动的间隔(秒) |
+| `coin_feed_check` | `--no-feed-check` | true | 挂机时先用 `nn\feednet.onnx` 判"还在信息流吗"(关掉就每轮跑完整识别) |
+| `coin_feed_thr` | `--feed-thr` | 0.40 | 判页阈值:分数 ≥ 它就算信息流 |
 | `coin_debug` | `--coin-debug` | false | 把每一步的判断图存到 `debug\` |
 
 「睡觉赚钱」这行是通宵任务,不适用"等倒计时"的模型,所以没做;想加的话在 `vision\recognizer.py` 的 `MODULES` 和 `template_spec.json` 里各加一项即可。
@@ -370,12 +432,15 @@ python vertical_swiper.py --cli --idle --idle-interval 5      # 同上,一条停
 ## 文件
 
 - `vertical_swiper.py` — 主程序(界面 + 命令行 + ADB 封装 + 两种模式的执行器)
-- `vision\` — 识别层:`screen.py`(截图/点按)`canvas.py`(16:9 画布)`matcher.py`(多尺度模板匹配)`nn.py`(神经网络推理,cv2.dnn 跑 ONNX)`recognizer.py`(两条路择一 → 页面结论)`digits.py`(读倒计时数字)`coin_task.py`(金币任务状态机)
-- `nn\` — 训练侧(平时不用):`data.py`(标注/增广/合成/编解码)`model.py`(检测网络)`train.py`(训练)`export.py`(导出 ONNX)`coindet.onnx`(训练好的模型,479 KB)
-- `venv_train\` — 训练专用环境(只读继承 conda 的 torch,不影响 conda);发布包里没有这个目录
+- `vision\` — 识别层:`screen.py`(截图/点按)`canvas.py`(16:9 画布)`matcher.py`(多尺度模板匹配)`nn.py`(神经网络推理,cv2.dnn 跑 ONNX)`recognizer.py`(两条路择一 → 页面结论)`feedcheck.py`(挂机判页小网络,ONNX/GPU 两条后端)`digits.py`(读倒计时数字)`coin_task.py`(金币任务状态机)
+- `nn\` — 训练侧(平时不用):`data.py`(标注/增广/合成/编解码)`model.py`(检测网络)`train.py`(训练)`export.py`(导出 ONNX)`coindet.onnx`(检测模型,479 KB);`feed.py`(判页小网络)`feed_data.py`(自动标注/缓存)`train_feed.py`(训练)`export_feed.py`(导出)`feednet.onnx`(判页模型,310 KB)
+- `env_gpu\` — 项目自带的 GPU 环境(从 conda 的 `myTorch` 克隆;torch+cv2+onnx,4.6 GB);训练和"想用 GPU 跑软件"时用,平时用 `Scroller` 就行
+- `venv_train\` — 旧版训练环境(只读继承 conda 的 torch),已被 `env_gpu\` 取代;发布包里没有这个目录
 - `vision\templates\` — 模板图 + `manifest.json`(阈值、缩放档、说明);`digits\` 里是数字模板
 - `tools\make_templates.py` — 从 `shoot\` 的截图裁模板、出审阅图、写 manifest
 - `tools\harvest_digits.py` — 从截图里抠数字模板
+- `tools\harvest_feed.py` — 连真机连拍信息流,给判页网络补正样本
+- `tools\bench_feed.py` — 判页网络评测:逐图分数、阈值扫描、两条后端的延迟
 - `tools\selftest.py` — 离线回归:所有截图 × 所有模板的打分矩阵
 - `tools\bench_nn.py` — 模板匹配 vs 神经网络的准确率对比(含位置偏移压力测试)
 - `tools\simulate.py` — 离线跑状态机(不用手机,验证点按顺序)

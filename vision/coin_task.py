@@ -21,6 +21,7 @@ import cv2
 
 from .canvas import Canvas
 from .digits import DigitReader
+from .feedcheck import FeedCheck
 from .recognizer import MODULES, Recognizer
 
 DIGIT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -48,6 +49,11 @@ DEFAULTS = {
     "idle_after": True,
     # 挂机时两次滑动之间的间隔(秒),随机在 [x-0.5, x+0.5] 之间取
     "idle_interval": 3.5,
+    # 挂机时先用 nn\feednet.onnx 这张小网络快速判"还在信息流吗"(连 resize 约 10 ms);
+    # 判成信息流就直接滑,判成别的才跑一帧完整识别去分辨是金币页还是落地页
+    "feed_check": True,
+    # 判页阈值。正样本(信息流)最低 0.601、负样本最高 0.046,取中间偏安全的一侧
+    "feed_thr": 0.40,
     # 模块顺序
     "modules": ["shop_video", "live", "water"],
     # 识别优先走神经网络(模型文件 nn\coindet.onnx 存在时才生效),
@@ -100,6 +106,10 @@ class CoinTask:
         self._digits = None
         self._stray = 0
         self._standby_logged = False   # 挂机待机的日志只打一次,别刷屏
+        self._feedchk = None           # 挂机判页的小网络,第一次用时才加载
+        self._feed_img = None          # peek_feed() 截下的那一帧,能给完整识别复用
+        self._feed_score = None
+        self._feed_ms = 0.0
 
     # -- 基础动作 ------------------------------------------------------
     def _check_stop(self):
@@ -127,16 +137,60 @@ class CoinTask:
         raw = self.screen.capture_settled() if settled else self.screen.capture()
         if raw is None:
             return None
-        view = self.rec.classify(canvas.normalize(raw))
-        self._last_img = canvas.normalize(raw)
+        return self.classify_image(canvas.normalize(raw))
+
+    def classify_image(self, img):
+        """对已经截好、已经归一化的画布图跑一次完整识别。
+
+        peek_feed() 判"不是信息流"时,那一帧直接拿来用 —— 挂机循环里
+        截图要 1.4 s,同一帧截两次纯属浪费。
+        """
+        view = self.rec.classify(img)
+        self._last_img = img
         if self.debug_dir:
             self._debug_seq += 1
             path = "%s\\%03d_%s.png" % (self.debug_dir, self._debug_seq, view.page)
             try:
-                self.rec.draw(canvas.normalize(raw), view, path)
+                self.rec.draw(img, view, path)
             except OSError:
                 pass
         return view
+
+    def _feed_checker(self):
+        if self._feedchk is None:
+            thr = self.cfg.get("feed_thr")
+            self._feedchk = FeedCheck(thr=float(thr) if thr else None)
+            if not self._feedchk.available():
+                self.log("判页小网络不可用(nn\\feednet.onnx / feednet.pt 都不在),"
+                         "挂机时每轮都跑完整识别")
+        return self._feedchk
+
+    def peek_feed(self):
+        """快速看一眼:还停在信息流吗?
+
+        返回 (ok, score):
+        - (True,  s):是信息流,直接滑;
+        - (False, s):不是 —— `self._feed_img` 里是这一帧,拿去 classify_image()
+                     分辨到底是金币页(待机)还是落地页(上滑 + 返回);
+        - (None, None):判页网络用不了 / 截图失败,请调用方退回 self.view()。
+        """
+        if not self.cfg.get("feed_check", True):
+            return None, None
+        canvas = self._ensure_canvas()
+        chk = self._feed_checker()
+        if not chk.available():
+            return None, None
+        raw = self.screen.capture()
+        if raw is None:
+            return None, None
+        img = canvas.normalize(raw)
+        ok, score = chk.is_feed(img)
+        if score is None:
+            return None, None
+        self._feed_img = img
+        self._feed_score = score
+        self._feed_ms = chk.last_ms
+        return ok, score
 
     def tap_canvas(self, cx, cy):
         dev = self._ensure_canvas().to_device(cx, cy)
@@ -185,16 +239,23 @@ class CoinTask:
         for _ in range(5):
             self._check_stop()
             self._guard_app()
-            view = self.view()
+            ok, _ = self.peek_feed()
+            if ok is True:
+                break
+            view = (self.classify_image(self._feed_img) if ok is False
+                    else self.view())
             if view is not None and view.page == "feed":
                 break
             self.log("  当前在「%s」,按返回回视频流" % (view.page if view else "未知"))
             self.screen.back()
             self._sleep(1.2)
         # 万一返回过头退到了 App 外面,再切回「多多视频」标签
-        view = self.view()
-        if view is None or view.page != "feed":
-            self.ensure_video_tab()
+        ok, _ = self.peek_feed()
+        if ok is not True:
+            view = (self.classify_image(self._feed_img) if ok is False
+                    else self.view())
+            if view is None or view.page != "feed":
+                self.ensure_video_tab()
 
         count = 0
         while True:
@@ -202,8 +263,19 @@ class CoinTask:
             self._guard_app()
             # 每一轮都看一眼界面:挂机时你可能自己点回二级菜单去了,
             # 这时候再滑就是在往你的菜单里甩手指(会滚列表、误触)。
-            view = self.view(settled=False)
-            page = view.page if view is not None else "unknown"
+            #
+            # 这一眼走的是 nn\feednet.onnx 那张 7.6 万参数的小网络(连 resize 约 10 ms),
+            # 不再每轮跑 22 张模板的完整识别(0.8~3.6 s)。判成"不是信息流"
+            # 才补一次完整识别,去分辨是金币页(待机)还是落地页(上滑)。
+            ok, score = self.peek_feed()
+            if ok is None:
+                view = self.view(settled=False)
+                page = view.page if view is not None else "unknown"
+            elif ok:
+                page = "feed"
+            else:
+                view = self.classify_image(self._feed_img)
+                page = view.page if view is not None else "unknown"
             if page in ("coin_page", "water_popup", "task"):
                 # 你在用手机 → 原地待机,一次都不滑,等你回到视频流再接着挂
                 self._idle_standby(page)
@@ -217,9 +289,16 @@ class CoinTask:
                 self.fling_up()
             else:
                 self.swipe_keepalive()
-            pause = base + random.uniform(-0.5, 0.5)
-            self.log("挂机:第 %d 次滑动,%.1f 秒后继续" % (count, pause))
+            pause = max(0.2, base + random.uniform(-0.5, 0.5))
+            self.log("挂机:第 %d 次滑动,%.1f 秒后继续%s"
+                     % (count, pause, self._feed_note()))
             self._sleep(pause)
+
+    def _feed_note(self):
+        """日志尾巴:这一条判页花了多少、分数多少(判页网络不可用时为空)。"""
+        if self._feed_score is None:
+            return ""
+        return "(判页 %.2f,%.1f ms)" % (self._feed_score, self._feed_ms)
 
     def _idle_standby(self, page):
         """挂机时的待机:你已经点进了别的页面,就先不滑,等回到视频流。
@@ -236,9 +315,13 @@ class CoinTask:
             self._check_stop()
             self._guard_app()
             self._sleep(1.2)
-            view = self.view(settled=False)
-            page = view.page if view is not None else "unknown"
-            if page == "feed":
+            # 待机时也只跑判页小网络:你在菜单里翻,每 1.2 秒跑一次完整识别
+            # (0.8~3.6 s)会把这个循环拖成"每 5 秒看一眼",回到视频流都要等半天。
+            ok, _ = self.peek_feed()
+            if ok is None:
+                view = self.view(settled=False)
+                ok = view is not None and view.page == "feed"
+            if ok:
                 self._standby_logged = False
                 self.log("回到视频流了,继续挂机")
                 return "resume"
@@ -395,9 +478,19 @@ class CoinTask:
         标签栏点不到,就先退一步再试。
         """
         guard = self.cfg.get("target_pkg") or ""
+        # 最常见的情况:本来就停在视频流上。先让判页小网络看一眼(约 1.5 s),
+        # 就不必为"已经到位了"再跑一次 22 张模板的完整识别。
+        ok, _ = self.peek_feed()
+        if ok is True:
+            self.log("已在多多视频(主信息流)")
+            return True
         for i in range(tries):
             self._check_stop()
-            view = self.view()
+            if ok is False:
+                view = self.classify_image(self._feed_img)
+            else:
+                view = self.view()
+            ok = False
             if view is None:
                 self._sleep(1.0)
                 continue

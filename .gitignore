@@ -3,6 +3,7 @@ venv/
 venv_train/
 .venv/
 env/
+env_gpu/
 # Python 缓存
 __pycache__/
 *.py[cod]
@@ -12,10 +13,13 @@ logs/
 debug/
 swiper_error.log
 *.log
-# 训练产物(模型本体 nn/coindet.onnx 需要保留)
+# 训练产物(模型本体 nn/coindet.onnx、nn/feednet.onnx 需要保留)
 nn/checkpoints/
+nn/feed_cache.npz
+# 本机配置(含 adb 路径与设备序列号,不该进库)
+config.json
 # 编辑器 / 系统
 .vscode/
 .idea/
 Thumbs.db
-desktop.iniconfig.json
+desktop.ini

@@ -14,8 +14,22 @@ set "PY="
 set "PYW="
 set "EXE="
 set "VENV=%~dp0venv\Scripts"
-set "CONDA_PY=C:\Users\Chen\.conda\envs\Scroller\python.exe"
-set "CONDA_PYW=C:\Users\Chen\.conda\envs\Scroller\pythonw.exe"
+rem ---- conda 环境 Scroller 的候选路径 ----
+rem  环境目录挪过一次:E:\CondaData\envs\Scroller 是现在的,E:\Users\<你>\.conda\envs\Scroller
+rem  是旧的(可能已经不存在)。按顺序找第一个存在 python.exe 的。
+rem  最后那个 env_gpu 是项目自带的 GPU 环境(torch+cv2),算兜底。
+set "CONDA_PY="
+set "CONDA_PYW="
+for %%D in (
+    "E:\CondaData\envs\Scroller"
+    "%USERPROFILE%\.conda\envs\Scroller"
+    "E:\Data\DSHWork\vertical_swiper\env_gpu"
+) do (
+    if not defined CONDA_PY if exist "%%~D\python.exe" (
+        set "CONDA_PY=%%~D\python.exe"
+        set "CONDA_PYW=%%~D\pythonw.exe"
+    )
+)
 
 if exist "%APP%" goto :check_venv
 echo.
@@ -26,7 +40,7 @@ exit /b 1
 
 :check_venv
 rem ---- 0) 首选 conda 环境 Scroller(本机运行环境) ----
-if not exist "%CONDA_PY%" goto :try_venv
+if not defined CONDA_PY goto :try_venv
 if not "%~1"=="" goto :conda_console
 if exist "%CONDA_PYW%" (
     start "" "%CONDA_PYW%" "%APP%"
