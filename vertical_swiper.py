@@ -165,7 +165,7 @@ class Config:
     guard_app: bool = False            # 仅当目标应用在前台时才上滑
     # ---- 识别模式(多多视频金币任务)----
     mode: str = "swipe"                # swipe = 纯定时上滑, coins = 金币任务, idle = 多多视频挂机
-    coin_modules: str = "shop_video,live,water"   # 要做的模块,逗号分隔
+    coin_modules: str = "wheel,shop_video,live,water"   # 要做的模块,逗号分隔
     coin_max_minutes: int = 60         # 一轮最多跑多久
     coin_done_delay: int = 10          # 倒计时完成后等几秒再返回
     coin_monitor_interval: float = 3.5   # 倒计时中每隔几秒滑动一次(须小于 5 秒)
@@ -177,6 +177,9 @@ class Config:
     coin_nn: bool = True               # 识别优先用训练出来的神经网络(模型在则生效)
     coin_feed_check: bool = True       # 挂机时先用小网络(nn\feednet.onnx)判"还在信息流吗"
     coin_feed_thr: float = 0.40        # 判页阈值:分数 ≥ 它就算信息流
+    # 大转盘(天天抽现金):每天次数有限,点了「抽」要等 3~4 秒出结果
+    coin_wheel_max_spins: int = 8      # 一轮最多点几下(防止页面卡住时无限点)
+    coin_wheel_spin_wait: float = 6.0  # 点完「抽」等结果弹窗出来的上限(秒)
 
 
 def load_config():
@@ -556,7 +559,7 @@ class CoinRunner:
             "done_delay": max(0, int(self.cfg.coin_done_delay)),
             "monitor_interval": max(1.5, float(self.cfg.coin_monitor_interval)),
             "swipe_duration": max(80, int(self.cfg.coin_swipe_duration)),
-            "modules": modules or ["shop_video", "live", "water"],
+            "modules": modules or ["wheel", "shop_video", "live", "water"],
             "target_pkg": self.cfg.target_pkg or COIN_APP_PKG,
             "launch_app": bool(self.cfg.launch_app),
             "idle_after": bool(self.cfg.coin_idle),
@@ -565,6 +568,9 @@ class CoinRunner:
             # 挂机判页:小网络每轮先看一眼"还在信息流吗"
             "feed_check": bool(self.cfg.coin_feed_check),
             "feed_thr": float(self.cfg.coin_feed_thr),
+            # 大转盘:次数、等结果的上限
+            "wheel_max_spins": max(1, int(self.cfg.coin_wheel_max_spins)),
+            "wheel_spin_wait": max(2.0, float(self.cfg.coin_wheel_spin_wait)),
             # 挂机模式:不做金币任务,进去就直接刷视频
             "idle_only": self.cfg.mode == "idle",
         }
@@ -1146,7 +1152,7 @@ def main():
     parser.add_argument("--coins", action="store_true", help="等价于 --mode coins")
     parser.add_argument("--idle", action="store_true", help="等价于 --mode idle(只刷视频,不做任务)")
     parser.add_argument("--modules", type=str,
-                        help="金币任务要做的模块,逗号分隔: shop_video,live,water")
+                        help="金币任务要做的模块,逗号分隔: wheel,shop_video,live,water")
     parser.add_argument("--done-delay", type=int, dest="done_delay",
                         help="倒计时完成后等几秒再返回(默认 10)")
     parser.add_argument("--monitor-interval", type=float, dest="monitor_interval",

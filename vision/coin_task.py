@@ -54,14 +54,23 @@ DEFAULTS = {
     "feed_check": True,
     # 判页阈值。正样本(信息流)最低 0.601、负样本最高 0.046,取中间偏安全的一侧
     "feed_thr": 0.40,
-    # 模块顺序
-    "modules": ["shop_video", "live", "water"],
+    # 模块顺序。大转盘放最前面:它就在列表最上面,一次点击就有金币,
+    # 而且每天次数有限,先把它抽掉再去做那些要等倒计时的任务。
+    "modules": ["wheel", "shop_video", "live", "water"],
+    # 大转盘一次最多点几下「抽」(防止页面卡住时无限点)。次数用完时中间那个
+    # 红按钮会变灰、认不出来,循环本来也会自己结束,这个只是兜底。
+    "wheel_max_spins": 8,
+    # 点完「抽」之后等结果弹窗出来的时间(秒)。转盘动画真机实测 3~4 秒。
+    "wheel_spin_wait": 6.0,
     # 识别优先走神经网络(模型文件 nn\coindet.onnx 存在时才生效),
     # 它没认出来的类别仍然用模板匹配补 —— 两条路互补
     "nn": True,
 }
 
 MODULE_NAMES = {
+    # 「天天抽现金」那行点开就是大转盘:每天第一次进多多视频/金币页时出现,
+    # 转一次给一份金币,次数来自「剩余次数:N次」。
+    "wheel": "大转盘(天天抽现金)",
     "shop_video": "看商品视频得现金",
     "live": "看直播赚现金",
     # 这个名字只用来打日志。拼多多 8.31 把它改成了「每日8次喝水赚钱」,
@@ -430,6 +439,11 @@ class CoinTask:
         self.fling_up()
         self._sleep(1.5)
         view = self.view(settled=False)
+        if view is not None and view.page in ("wheel", "wheel_result"):
+            # 有些入口(比如"做任务得抽奖机会")会直接把大转盘弹出来
+            self.log("  碰上大转盘,先抽掉")
+            self.handle_wheel()
+            return self.view(settled=False)
         if view is not None and view.page != "unknown":
             return view
         self.log("  还是认不出来,按返回")
@@ -536,6 +550,10 @@ class CoinTask:
             if view.page in ("feed", "coin_page", "water_popup", "task"):
                 self.log("已在多多视频(%s)" % view.label)
                 return True
+            if view.page in ("wheel", "wheel_result"):
+                self.log("  先把大转盘抽掉")
+                self.handle_wheel()
+                continue
             # 认不出这页时先确认前台是不是目标 App:不是就绝不乱点(桌面/其他
             # App 上点底部标签会戳到别的东西)
             if guard and not self._in_target_app(guard):
@@ -552,6 +570,11 @@ class CoinTask:
             if view is not None and view.page in ("feed", "coin_page", "task"):
                 self.log("已进入多多视频(%s)" % view.label)
                 return True
+            if view is not None and view.page in ("wheel", "wheel_result"):
+                # 切标签的路上被大转盘盖住了(每日首开常见):先抽掉再看
+                self.log("  先把大转盘抽掉")
+                self.handle_wheel()
+                continue
             # 标签栏被别的页面挡着(商品详情、搜索页……),退一步再来
             self.screen.back()
             self._sleep(1.2)
@@ -575,6 +598,10 @@ class CoinTask:
             self.log("当前界面:%s" % view)
             if view.page == "coin_page":
                 return True
+            if view.page in ("wheel", "wheel_result"):
+                self.log("  先把大转盘抽掉")
+                self.handle_wheel()
+                continue
             if view.page == "feed":
                 entry = view.hits.get("coin_entry")
                 if entry is not None:
@@ -739,6 +766,104 @@ class CoinTask:
         self.screen.back()
         return "fail"
 
+    def _wheel_wait(self, timeout=None):
+        """在大转盘上等状态变化:出结果 / 回到金币页 / 回到信息流。
+
+        轮盘页在转的时候画面一直在动,所以不判"画面稳住",直接看锚点变没变。
+        """
+        end = time.time() + float(timeout or self.cfg.get("wheel_spin_wait", 6.0))
+        view = None
+        while time.time() < end:
+            self._check_stop()
+            self._guard_app()
+            view = self.view(settled=False)
+            if view is not None and view.page in ("wheel_result", "coin_page", "feed"):
+                return view
+            self._sleep(0.5)
+        return view
+
+    def handle_wheel(self):
+        """大转盘(天天抽现金):点中间的「抽」,出结果后点「继续抽奖」,转到没次数为止。
+
+        真机流程(2026-11-17,RMX3800 / 拼多多 7.53):
+          金币页「天天抽现金 → 去抽奖」→ 大转盘页(中间大红「抽」,下面写
+          「剩余次数:N次」)→ 点「抽」→ 整屏转 3~4 秒 → 「恭喜抽中 …」+
+          「继续抽奖」→ 点它直接转下一次 … 次数用完时红按钮变灰。
+        所以不用认「剩余次数」那个数字:红按钮认不出来就说明没次数了。
+        """
+        deadline = time.time() + self.cfg["page_wait"]
+        view = None
+        # 1) 等轮盘页出来(点完「去抽奖」到轮盘铺满屏,真机约 2~3 秒)
+        while time.time() < deadline:
+            self._check_stop()
+            self._guard_app()
+            view = self.view(settled=False)
+            if view is None:
+                continue
+            self.log("当前界面:%s" % view)
+            if view.page in ("wheel", "wheel_result"):
+                break
+            if view.page in ("coin_page", "feed"):
+                self.log("没打开抽奖页(%s),这一行跳过" % view.label)
+                return "skip"
+            self._sleep(1.0)
+        if view is None or view.page not in ("wheel", "wheel_result"):
+            self.log("等大转盘超时")
+            self.screen.back()
+            self._sleep(1.0)
+            return "fail"
+
+        taps = 0
+        limit = max(1, int(self.cfg.get("wheel_max_spins", 8)))
+        spent_unconfirmed = False     # 点过「抽」但还没看到结果
+        while taps < limit:
+            self._check_stop()
+            if view is None:
+                break
+            if view.page == "wheel_result":
+                btn = view.hits.get("wheel_continue")
+                if btn is None:
+                    break
+                self.log("抽到了,点「继续抽奖」")
+                self.tap_canvas(btn.cx, btn.cy)
+                taps += 1
+                spent_unconfirmed = False
+                view = self._wheel_wait()
+                continue
+            if view.page != "wheel":
+                break
+            btn = view.hits.get("wheel_spin")
+            if btn is None:
+                self.log("中间的「抽」按钮认不出来了,次数应该用完了")
+                break
+            if spent_unconfirmed:
+                # 上一次点完「抽」没等到结果又回到这个画面:多半是次数用完
+                # (按钮变灰但还勉强匹配上),再点一次就是白转,停手。
+                self.log("没等到抽奖结果,不连着点了(可能次数用完)")
+                break
+            self.log("点第 %d 次「抽」" % (taps + 1))
+            self.on_status("大转盘第 %d 次抽奖" % (taps + 1))
+            self.tap_canvas(btn.cx, btn.cy)
+            taps += 1
+            spent_unconfirmed = True
+            view = self._wheel_wait()
+            if view is not None and view.page == "wheel_result":
+                spent_unconfirmed = False
+            elif view is not None and view.page in ("coin_page", "feed"):
+                break
+
+        self.log("大转盘结束(一共点了 %d 次)" % taps)
+        # 2) 收尾:结果弹窗盖着就按一次返回,还在轮盘页再按一次
+        for _ in range(2):
+            self._sleep(0.8)
+            probe = self.view(settled=False)
+            if probe is None or probe.page in ("wheel", "wheel_result"):
+                self.screen.back()
+                self._sleep(1.0)
+                continue
+            break
+        return "ok" if taps else "skip"
+
     def handle_countdown(self, module):
         """视频/直播:盯气泡,有倒计时才滑,完成后再等 done_delay 秒返回。"""
         label = MODULE_NAMES.get(module, module)
@@ -760,6 +885,13 @@ class CoinTask:
             if view.page == "coin_page":
                 self.log("没有进入「%s」页面,可能今天做完了" % label)
                 return "skip"
+            if view.page in ("wheel", "wheel_result"):
+                # 大转盘是每日任务,次数当天清零 —— 半路弹出来就先抽掉再继续,
+                # 别当成"看不懂的页面"一滑了之。
+                self.log("半路弹出了大转盘,先抽掉")
+                self.handle_wheel()
+                started = time.time()
+                continue
             if view.page == "unknown" and not recovered and time.time() > started + 3:
                 # 点「去逛逛」之后先到的是中间页(如「三单福利」),气泡还没出来。
                 # 这种页面上滑就能继续看视频,先上滑;不行再返回(用户要求)。
@@ -966,6 +1098,8 @@ class CoinTask:
 
             if module == "water":
                 outcome = self.handle_water()
+            elif module == "wheel":
+                outcome = self.handle_wheel()
             else:
                 outcome = self.handle_countdown(module)
             results[module] = outcome

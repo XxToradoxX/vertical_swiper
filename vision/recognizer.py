@@ -39,6 +39,11 @@ ROI = {
     # 干脆放到 0.060(设备 y≈154 起),两种排版都罩住;模板要 0.72 才算命中,
     # 往上放宽一点不会误判。
     "coin_entry": (0.60, 0.060, 1.00, 0.360),
+    # 大转盘(「天天抽现金」)页面正中间那个红色「抽」按钮。轮盘页盖住整屏,
+    # 这块 ROI 只在中上部,别的页面上不会出现同样的东西。
+    "wheel_btn": (0.33, 0.230, 0.67, 0.390),
+    # 抽完之后那张「恭喜抽中 …」结果弹窗里的「继续抽奖」大按钮
+    "wheel_cta": (0.30, 0.590, 0.72, 0.700),
     # 喝水弹窗标题
     "water_title": (0.15, 0.235, 0.92, 0.345),
     # 喝水弹窗底部大按钮
@@ -58,6 +63,7 @@ ROW_SAFE_BOTTOM = 0.955
 # 带 _new 后缀的是拼多多 8.31 改版后的字形(字号/字距都变了,旧模板在那些
 # 屏幕上只有 0.49~0.86,过不了 0.85 的阈值),两台手机的截图各标一套。
 MODULES = {
+    "wheel": ("row_wheel",),
     "shop_video": ("row_shop_video", "row_shop_video_new"),
     "water": ("row_water", "row_water_new"),
     "live": ("row_live", "row_live2", "row_live_new"),
@@ -65,7 +71,7 @@ MODULES = {
 
 # 页面级锚点也都有"新旧两版字形",按候选列表依次试,取分最高的那个
 PAGE_HEADERS = ("page_coin", "page_coin_new")
-COIN_ENTRIES = ("coin_entry", "coin_entry_new")
+COIN_ENTRIES = ("coin_entry", "coin_entry_new", "coin_entry_daily", "coin_entry_daily2")
 WATER_TITLES = ("water_popup_title", "water_popup_title_new")
 WATER_BTNS = ("water_checkin_btn", "water_checkin_btn_new")
 
@@ -75,6 +81,8 @@ ROW_TPLS = {tpl: mod for mod, tpls in MODULES.items() for tpl in tpls}
 LABELS = {
     "coin_page": "金币二级界面",
     "water_popup": "喝水打卡弹窗",
+    "wheel": "大转盘",
+    "wheel_result": "大转盘抽奖结果",
     "task_watch": "倒计时进行中",
     "task_done": "倒计时已完成",
     "task_cooldown": "任务已完成,冷却中",
@@ -348,6 +356,9 @@ class Recognizer:
         water_title = find_best(WATER_TITLES, "water_title")
         header = find_best(PAGE_HEADERS, "coin_header")
         entry = find_best(COIN_ENTRIES, "coin_entry")
+        # 大转盘的两张锚点:中间的「抽」按钮,和结果弹窗里的「继续抽奖」
+        wheel_spin = find_best(("wheel_spin",), "wheel_btn")
+        wheel_cta = find_best(("wheel_continue",), "wheel_cta")
 
         rows = {}
         row_mods = {}          # 模板名 -> 模块名
@@ -377,6 +388,10 @@ class Recognizer:
             hits["page_coin"] = header
         if entry is not None:
             hits["coin_entry"] = entry
+        if wheel_spin is not None:
+            hits["wheel_spin"] = wheel_spin
+        if wheel_cta is not None:
+            hits["wheel_continue"] = wheel_cta
         if bubble_hit is not None:
             hits[bubble_hit.name] = bubble_hit
         hits.update(rows)
@@ -442,6 +457,13 @@ class Recognizer:
 
         if water_title is not None:
             return View("water_popup", hits, bubble_hit and "watch")
+
+        # 大转盘盖住整屏,优先级排在气泡/金币页前面:它出现时右上角那块、
+        # 「我的金币」标题都会被自己的界面盖掉,拿别的锚点去判断只会误判。
+        if hits.get("wheel_continue") is not None:
+            return View("wheel_result", hits)
+        if hits.get("wheel_spin") is not None:
+            return View("wheel", hits)
 
         if bubble_hit is not None:
             # 倒计时气泡比"金币页标题"更可信:任务页一定有气泡,金币页一定没有。
