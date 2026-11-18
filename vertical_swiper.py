@@ -38,6 +38,7 @@ APP_TITLE = "竖屏视频自动上滑助手"
 ERROR_LOG = os.path.join(APP_DIR, "swiper_error.log")
 LOG_DIR = os.path.join(APP_DIR, "logs")
 KEEP_LOGS = 60          # 只保留最近这么多次运行的日志
+STAY_ON_KEY = "stay_on_while_plugged_in"   # 充电时不熄屏(0~7,7=三种充电方式都常亮)
 
 
 class RunLog:
@@ -265,6 +266,38 @@ def find_adb(preferred=""):
     return "adb"
 
 
+def _stay_on_get(cfg):
+    """手机现在的「充电时不熄屏」设置(0~7);读不到返回 None。"""
+    rc, out = adb_run(cfg, ["shell", "settings", "get", "global",
+                            STAY_ON_KEY], timeout=10)
+    if rc != 0:
+        return None
+    txt = (out or "").strip()
+    return txt if txt.isdigit() else None
+
+
+def _stay_on_put(cfg, value):
+    rc, _ = adb_run(cfg, ["shell", "settings", "put", "global",
+                          STAY_ON_KEY, str(value)], timeout=10)
+    return rc == 0
+
+
+def awake_start(cfg):
+    """跑任务期间别让手机熄屏。返回 (是否成功, 原来的设置)。
+
+    7 = 充电器 / USB / 无线充电 三种情况都常亮。收尾时 awake_stop() 把原来的
+    值放回去 —— 以前的写法直接 `svc power stayon false`,会把用户自己的
+    「充电时保持唤醒」也一起关掉。
+    """
+    prev = _stay_on_get(cfg)
+    return _stay_on_put(cfg, 7), prev
+
+
+def awake_stop(cfg, prev):
+    """把「充电时不熄屏」改回原样(没读到原值就恢复成 0)。"""
+    _stay_on_put(cfg, prev if prev is not None else 0)
+
+
 def adb_run(cfg, args, timeout=20):
     """执行 adb 命令,返回 (返回码, 合并后的输出)。"""
     exe = cfg.adb_path or find_adb()
@@ -335,6 +368,7 @@ class SwiperCore:
         self.last_error = ""
         self._size = None
         self._awake = False
+        self._awake_prev = None
         self._last_fg = ""
         self._stop = threading.Event()
         self._thread = None
@@ -442,10 +476,11 @@ class SwiperCore:
         if not self.ensure_device():
             return False
         if self.cfg.keep_awake:
-            rc, _ = self._adb(["shell", "svc", "power", "stayon", "true"], timeout=15)
-            if rc == 0:
+            ok, prev = awake_start(self.cfg)
+            if ok:
                 self._awake = True
-                self.log("已开启屏幕常亮")
+                self._awake_prev = prev
+                self.log("已开启屏幕常亮(结束时会恢复手机的原来设置)")
         if self.cfg.launch_app and self.cfg.target_pkg:
             self._launch_target()
         self.count = 0
@@ -463,7 +498,7 @@ class SwiperCore:
         self.next_at = 0.0
         if self._awake and not self.dry_run:
             self._awake = False
-            self._adb(["shell", "svc", "power", "stayon", "false"], timeout=10)
+            awake_stop(self.cfg, self._awake_prev)
         if not quiet:
             self.log("已停止,本次共上滑 %d 次" % self.count)
 
@@ -541,6 +576,7 @@ class CoinRunner:
         self._thread = None
         self._task = None
         self._awake = False
+        self._awake_prev = None
 
     @property
     def running(self):
@@ -622,8 +658,11 @@ class CoinRunner:
             self.log("缺少依赖: %s(先运行 tools\\setup_env.py 装好 numpy + opencv)" % exc)
             return False
         if self.cfg.keep_awake and not self.dry_run:
-            rc, _ = adb_run(self.cfg, ["shell", "svc", "power", "stayon", "true"], timeout=15)
-            self._awake = rc == 0
+            ok, prev = awake_start(self.cfg)
+            self._awake = ok
+            self._awake_prev = prev
+            if ok:
+                self.log("已开启屏幕常亮(结束时会恢复手机的原来设置)")
         self._stop.clear()
         self.status = "启动中"
         self._thread = threading.Thread(target=self._loop, name="coins", daemon=True)
@@ -639,7 +678,7 @@ class CoinRunner:
         self.next_at = 0.0
         if self._awake and not self.dry_run:
             self._awake = False
-            adb_run(self.cfg, ["shell", "svc", "power", "stayon", "false"], timeout=10)
+            awake_stop(self.cfg, self._awake_prev)
         if not quiet:
             self.log("金币任务已停止")
 

@@ -646,6 +646,28 @@ class CoinTask:
         """(认出的行, 内容区画面) —— 判断"滑动到底动没动"用。"""
         return (self._list_sig(view), self._content_sig())
 
+    def _wheel_sig(self):
+        """轮盘那块(画布 0.08~0.58 高)的粗指纹,判断点完「抽」有没有转起来。"""
+        img = getattr(self, "_last_img", None)
+        if img is None:
+            return None
+        try:
+            h = img.shape[0]
+            crop = img[int(h * 0.08):int(h * 0.58), :]
+            return cv2.resize(crop, (32, 32), interpolation=cv2.INTER_AREA)
+        except (cv2.error, ValueError):
+            return None
+
+    def _wheel_moved(self, before):
+        """两帧轮盘的粗差异(0~255)。点击没生效时几乎是同一张图(< 2)。"""
+        cur = self._wheel_sig()
+        if before is None or cur is None or before.shape != cur.shape:
+            return None
+        try:
+            return float(cv2.absdiff(before, cur).mean())
+        except (cv2.error, ValueError):
+            return None
+
     def _reenter_coin_page(self):
         """退回信息流再点金币入口重进。
 
@@ -665,6 +687,18 @@ class CoinTask:
         # 整轮扫描的墙钟上限:一份列表看来看去也就那么几屏,真机上「这一行今天
         # 不在列表里」时最容易白滚两分钟 —— 所以宁可快点放弃。
         deadline = time.monotonic() + float(self.cfg.get("scan_seconds", 40))
+        # 金币页的列表会记住上次滚到哪(上一轮跑完停在中段很常见),而「天天抽现金」
+        # 这种每日任务就在最上面。从半截位置往下滚只会越滚越远 —— 2026-11-18 真机
+        # 就因此白滚了 40 秒没看到,重进一次才命中。所以先看标题在不在:不在就
+        # 翻回顶部再扫。
+        view0 = self.view(settled=False)
+        if (view0 is not None and view0.page == "coin_page"
+                and view0.hits.get("page_coin") is None):
+            self.log("列表不在顶部,先翻回顶部")
+            for _ in range(2):
+                self._check_stop()
+                self.swipe_down()
+                self._sleep(0.6)
         ended = 0
         for direction in ("往下", "往上"):
             last = None
@@ -770,6 +804,8 @@ class CoinTask:
         """在大转盘上等状态变化:出结果 / 回到金币页 / 回到信息流。
 
         轮盘页在转的时候画面一直在动,所以不判"画面稳住",直接看锚点变没变。
+        转的那 3~4 秒整屏会压暗 + 打光效,什么都认不出来(真机上还会被 NN 判成
+        「任务完成」),所以中途认不出不算结束,再补一段时间等它落地。
         """
         end = time.time() + float(timeout or self.cfg.get("wheel_spin_wait", 6.0))
         view = None
@@ -780,7 +816,25 @@ class CoinTask:
             if view is not None and view.page in ("wheel_result", "coin_page", "feed"):
                 return view
             self._sleep(0.5)
+        # 还在转:再给 4 秒,别在动画中途就下结论(下早了就会以为"没次数了")
+        extra = time.time() + 4.0
+        while time.time() < extra:
+            self._check_stop()
+            view = self.view(settled=False)
+            if view is not None and view.page in ("wheel_result", "coin_page", "feed"):
+                return view
+            self._sleep(0.5)
         return view
+
+    @staticmethod
+    def _wheel_result_btn(view):
+        """结果弹层上的按钮:抽中抽奖机会是「继续抽奖」,抽中金币/现金是「开心收下」。"""
+        btn = None
+        for name in ("wheel_continue", "wheel_collect"):
+            hit = view.hits.get(name)
+            if hit is not None and (btn is None or hit.score > btn.score):
+                btn = hit
+        return btn
 
     def handle_wheel(self):
         """大转盘(天天抽现金):点中间的「抽」,出结果后点「继续抽奖」,转到没次数为止。
@@ -821,10 +875,13 @@ class CoinTask:
             if view is None:
                 break
             if view.page == "wheel_result":
-                btn = view.hits.get("wheel_continue")
+                btn = self._wheel_result_btn(view)
                 if btn is None:
                     break
-                self.log("抽到了,点「继续抽奖」")
+                if btn.name == "wheel_collect":
+                    self.log("抽中了,点「开心收下」")
+                else:
+                    self.log("抽到了,点「继续抽奖」")
                 self.tap_canvas(btn.cx, btn.cy)
                 taps += 1
                 spent_unconfirmed = False
@@ -843,6 +900,7 @@ class CoinTask:
                 break
             self.log("点第 %d 次「抽」" % (taps + 1))
             self.on_status("大转盘第 %d 次抽奖" % (taps + 1))
+            before = self._wheel_sig()
             self.tap_canvas(btn.cx, btn.cy)
             taps += 1
             spent_unconfirmed = True
@@ -851,15 +909,43 @@ class CoinTask:
                 spent_unconfirmed = False
             elif view is not None and view.page in ("coin_page", "feed"):
                 break
+            elif view is not None and view.page == "wheel":
+                # 点完还站在同一个画面上、轮盘一点没动 ⇒ 今天次数已经用完了
+                # (「立即抽奖」那块还是红的,只有下面那行「剩余次数:0次」变了,
+                # 光看按钮认不出来)。真机 2026-11-18 就是这样白等了 14 秒。
+                moved = self._wheel_moved(before)
+                if moved is not None and moved < 6.0:
+                    self.log("轮盘一点没动(剩余次数是 0),今天抽完了")
+                    spent_unconfirmed = False
+                    break
 
         self.log("大转盘结束(一共点了 %d 次)" % taps)
-        # 2) 收尾:结果弹窗盖着就按一次返回,还在轮盘页再按一次
-        for _ in range(2):
-            self._sleep(0.8)
+        # 2) 收尾:转盘动画没停之前按返回会把结果按掉(2026-11-18 真机就是这样
+        #    丢掉了一次「20000金币」),所以先等它落地,落地后再点掉/返回。
+        settle = time.time() + 8.0
+        while time.time() < settle:
+            self._check_stop()
             probe = self.view(settled=False)
-            if probe is None or probe.page in ("wheel", "wheel_result"):
+            if probe is None:
+                continue
+            if probe.page == "wheel_result":
+                btn = self._wheel_result_btn(probe)
+                if btn is None:
+                    break
+                if btn.name == "wheel_collect":
+                    self.log("收尾:补点「开心收下」")
+                else:
+                    self.log("收尾:补点「继续抽奖」")
+                self.tap_canvas(btn.cx, btn.cy)
+                taps += 1
+                self._sleep(1.2)
+                continue
+            if probe.page == "wheel":
                 self.screen.back()
                 self._sleep(1.0)
+                break
+            if probe.page == "unknown":
+                self._sleep(0.6)      # 多半还在转,再等等
                 continue
             break
         return "ok" if taps else "skip"

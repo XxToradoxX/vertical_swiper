@@ -289,6 +289,17 @@
       ],
       "mode": "color"
     },
+    "wheel_collect": {
+      "file": "wheel_collect.png",
+      "desc": "大转盘结果弹层另一种:「开心收下」(抽中金币时的按钮;不管是哪种,点掉才算领到)",
+      "threshold": 0.7,
+      "scales": [
+        0.9,
+        1.0,
+        1.1
+      ],
+      "mode": "color"
+    },
     "coin_entry_daily": {
       "file": "coin_entry_daily.png",
       "desc": "首次打开这天的金币入口(+250 奶油圆盘,连数字一起裁)",

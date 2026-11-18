@@ -75,6 +75,10 @@ COIN_ENTRIES = ("coin_entry", "coin_entry_new", "coin_entry_daily", "coin_entry_
 WATER_TITLES = ("water_popup_title", "water_popup_title_new")
 WATER_BTNS = ("water_checkin_btn", "water_checkin_btn_new")
 
+# 大转盘结果弹层上的按钮,两种文案:抽中「1次抽奖机会」是「继续抽奖」,
+# 抽中金币/现金是「开心收下」。认哪个都得点掉,不点等于白抽。
+WHEEL_CTAS = ("wheel_continue", "wheel_collect")
+
 # 模板名 -> 模块名(反向索引;判定"这行露没露全"时用)
 ROW_TPLS = {tpl: mod for mod, tpls in MODULES.items() for tpl in tpls}
 
@@ -356,9 +360,10 @@ class Recognizer:
         water_title = find_best(WATER_TITLES, "water_title")
         header = find_best(PAGE_HEADERS, "coin_header")
         entry = find_best(COIN_ENTRIES, "coin_entry")
-        # 大转盘的两张锚点:中间的「抽」按钮,和结果弹窗里的「继续抽奖」
+        # 大转盘的锚点:中间的「抽」按钮,和结果弹窗里的按钮(两种:
+        # 「继续抽奖」=抽中抽奖机会,「开心收下」=抽中金币/现金)
         wheel_spin = find_best(("wheel_spin",), "wheel_btn")
-        wheel_cta = find_best(("wheel_continue",), "wheel_cta")
+        wheel_cta = find_best(WHEEL_CTAS, "wheel_cta")
 
         rows = {}
         row_mods = {}          # 模板名 -> 模块名
@@ -391,7 +396,8 @@ class Recognizer:
         if wheel_spin is not None:
             hits["wheel_spin"] = wheel_spin
         if wheel_cta is not None:
-            hits["wheel_continue"] = wheel_cta
+            # 用模板本名存(继续抽奖 / 开心收下),下面 _decide 和点击都按名字找
+            hits[wheel_cta.name] = wheel_cta
         if bubble_hit is not None:
             hits[bubble_hit.name] = bubble_hit
         hits.update(rows)
@@ -460,7 +466,7 @@ class Recognizer:
 
         # 大转盘盖住整屏,优先级排在气泡/金币页前面:它出现时右上角那块、
         # 「我的金币」标题都会被自己的界面盖掉,拿别的锚点去判断只会误判。
-        if hits.get("wheel_continue") is not None:
+        if hits.get("wheel_continue") is not None or hits.get("wheel_collect") is not None:
             return View("wheel_result", hits)
         if hits.get("wheel_spin") is not None:
             return View("wheel", hits)
