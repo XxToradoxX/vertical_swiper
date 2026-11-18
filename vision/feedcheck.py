@@ -62,10 +62,22 @@ class FeedCheck(object):
         if not self._tried:
             self._tried = True
             if self.want in ("auto", "torch"):
-                self._try_torch()
-            if self._net is None and self.want in ("auto", "onnx"):
+                # auto 的规矩:有能用的显卡才走 torch(GPU);没显卡时 torch-CPU
+                # 比 cv2.dnn 慢,所以退回 ONNX。显式 backend="torch" 时照旧强上。
+                if self.want == "torch" or self._cuda_ready():
+                    self._try_torch()
+            if self._net is None and self._model is None and self.want in ("auto", "onnx"):
                 self._try_onnx()
         return self._net is not None or self._model is not None
+
+    @staticmethod
+    def _cuda_ready():
+        """本机到底能不能用显卡(torch 装没装 + 驱动认不认)。"""
+        try:
+            import torch
+            return bool(torch.cuda.is_available())
+        except Exception:
+            return False
 
     def _try_torch(self):
         try:

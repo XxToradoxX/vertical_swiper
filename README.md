@@ -51,7 +51,31 @@ python vertical_swiper.py
 
 双击 **`启动助手.bat`**,或 `python vertical_swiper.py`。点「▶ 开始」或按 **F9** 开始,再按 F9 停止。
 
-双击时批处理会**优先用 conda 环境 `Scroller`**,找不到再退回项目内的 `venv`,最后才找系统 Python;找到后用同一套 Python 旁边的 `pythonw.exe` 无窗口启动。想看到控制台输出或传参数,就在 cmd/PowerShell 里带参数运行:
+双击时批处理会**先找能用显卡的环境**:依次检查项目里的 `env_gpu`、你自己的 `E:\CondaData\envs\myTorch`,对每个都真跑一次
+
+```bat
+python -c "import torch,sys;sys.exit(0 if torch.cuda.is_available() else 1)"
+```
+
+返回 0(显卡可用)就用它,判页小网络走 GPU。一个可用的都没有(没装 torch、显卡不支持、驱动太旧)就**自动退回 CPU 环境** `Scroller`,判页走 ONNX —— 同一套识别结果,只是不吃显卡。都没有再退回项目内的 `venv`,最后才找系统 Python。找到后用同一套 Python 旁边的 `pythonw.exe` 无窗口启动。
+
+带参数运行时会先把选择结果打出来,方便确认走的哪条路:
+
+```bat
+启动助手.bat --cli --mode idle
+运行环境: E:\Data\DSHWork\vertical_swiper\env_gpu\python.exe
+推理方式: GPU(显卡加速)
+```
+
+每次运行的日志开头也会写死这件事,事后不用猜:
+
+```
+Python 3.12.16 / nt / E:\Data\DSHWork\vertical_swiper
+解释器 E:\Data\DSHWork\vertical_swiper\env_gpu\python.exe
+显卡加速 检测到 NVIDIA GeForce RTX 3060 Laptop GPU + torch,判页优先走 GPU
+```
+
+想看到控制台输出或传参数,就在 cmd/PowerShell 里带参数运行:
 
 ```bat
 启动助手.bat --dry-run          :: 只打印坐标,不动手机
@@ -309,6 +333,10 @@ conda create --prefix .\env_gpu --clone myTorch -y
 ```
 
 它有两个用途:训练(这台机器是 NVIDIA,`nn\train_feed.py` 一路 AMP + CUDA)、以及**想用 GPU 跑软件时**直接把 `env_gpu\python.exe` 当解释器(判页会走 `torch:cuda` 后端)。平时用 `Scroller` 环境跑就行,那条路走 ONNX + CPU,行为完全一样。
+
+`启动助手.bat` 双击时会自动选:能用显卡就用 `env_gpu`(或你的 `myTorch`),用不了就退回 `Scroller`,不用手动改(详见「启动」一节)。
+
+判页后端的挑选规则(`vision\feedcheck.py`,`backend="auto"`):**有 CUDA 才用 torch**,没显卡时用 ONNX —— 因为 torch 走 CPU 反而比 `cv2.dnn` 慢,退回 ONNX 才是"没有显卡时的最快解"。想强制指定用 `FeedCheck(backend="torch")` / `"onnx"`。
 
 一个诚实的结论:**这个模型在 GPU 上没有更快**(单帧 CPU 2.7 ms / GPU 3.3 ms)。7.6 万参数的模型,单帧耗时几乎全是主机→显存拷贝和 kernel 启动,CPU 足够;GPU 的价值在以后把整帧识别(448×800 的 CenterNet)也搬过去。
 

@@ -41,6 +41,35 @@ KEEP_LOGS = 60          # 只保留最近这么多次运行的日志
 STAY_ON_KEY = "stay_on_while_plugged_in"   # 充电时不熄屏(0~7,7=三种充电方式都常亮)
 
 
+def gpu_summary():
+    """启动日志里写一行:「这台机器 / 这个环境」到底能不能用显卡。
+
+    故意不 import torch —— 那一下要 2~3 秒,每次开界面都付不值。
+    这里只看两件便宜的事:环境里有没有装 torch、系统里有没有 NVIDIA 驱动。
+    真正走哪条后端由 vision\\feedcheck.py 在第一次判页时决定并打日志。
+    """
+    try:
+        import importlib.util
+        has_torch = importlib.util.find_spec("torch") is not None
+    except Exception:
+        has_torch = False
+    name = ""
+    try:
+        exe = shutil.which("nvidia-smi") or r"C:\Windows\System32\nvidia-smi.exe"
+        out = subprocess.run([exe, "--query-gpu=name", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=4,
+                             creationflags=CREATE_NO_WINDOW)
+        if out.returncode == 0:
+            name = ((out.stdout or "").strip().splitlines() or [""])[0].strip()
+    except Exception:
+        name = ""
+    if not has_torch:
+        return "CPU(这个环境没装 torch,判页走 ONNX)"
+    if name:
+        return "检测到 %s + torch,判页优先走 GPU" % name
+    return "CPU(torch 已装,但没检测到 NVIDIA 驱动/显卡)"
+
+
 class RunLog:
     """运行日志:界面里看到的每一条,同时落到 logs\\run_<时间>_<模式>.log。
 
@@ -61,6 +90,8 @@ class RunLog:
                 time.strftime("%Y-%m-%d %H:%M:%S"), tag))
             self._write_raw("Python %s / %s / %s" % (
                 sys.version.split()[0], os.name, APP_DIR))
+            self._write_raw("解释器 %s" % sys.executable)
+            self._write_raw("显卡加速 %s" % gpu_summary())
             self._prune()
         except Exception:
             self._fh = None
