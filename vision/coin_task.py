@@ -814,7 +814,7 @@ class CoinTask:
             self._guard_app()
             view = self.view(settled=False)
             if view is not None and view.page in ("wheel_result", "coin_page", "feed"):
-                return view
+                return view, False
             self._sleep(0.5)
         # 还在转:再给 4 秒,别在动画中途就下结论(下早了就会以为"没次数了")
         extra = time.time() + 4.0
@@ -822,9 +822,9 @@ class CoinTask:
             self._check_stop()
             view = self.view(settled=False)
             if view is not None and view.page in ("wheel_result", "coin_page", "feed"):
-                return view
+                return view, False
             self._sleep(0.5)
-        return view
+        return view, True
 
     @staticmethod
     def _wheel_result_btn(view):
@@ -885,7 +885,7 @@ class CoinTask:
                 self.tap_canvas(btn.cx, btn.cy)
                 taps += 1
                 spent_unconfirmed = False
-                view = self._wheel_wait()
+                view, _ = self._wheel_wait()
                 continue
             if view.page != "wheel":
                 break
@@ -904,20 +904,22 @@ class CoinTask:
             self.tap_canvas(btn.cx, btn.cy)
             taps += 1
             spent_unconfirmed = True
-            view = self._wheel_wait()
+            view, timed_out = self._wheel_wait()
             if view is not None and view.page == "wheel_result":
                 spent_unconfirmed = False
             elif view is not None and view.page in ("coin_page", "feed"):
                 break
             elif view is not None and view.page == "wheel":
-                # 点完还站在同一个画面上、轮盘一点没动 ⇒ 今天次数已经用完了
+                # 点完还站在同一个画面上 ⇒ 今天次数已经用完了
                 # (「立即抽奖」那块还是红的,只有下面那行「剩余次数:0次」变了,
                 # 光看按钮认不出来)。真机 2026-11-18 就是这样白等了 14 秒。
                 moved = self._wheel_moved(before)
-                if moved is not None and moved < 6.0:
+                if timed_out or (moved is not None and moved < 6.0):
                     self.log("轮盘一点没动(剩余次数是 0),今天抽完了")
                     spent_unconfirmed = False
                     break
+                if moved is not None:
+                    self.log("轮盘动了(差异 %.1f),但没认出结果,再看一轮" % moved)
 
         self.log("大转盘结束(一共点了 %d 次)" % taps)
         # 2) 收尾:转盘动画没停之前按返回会把结果按掉(2026-11-18 真机就是这样

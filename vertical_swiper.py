@@ -266,10 +266,22 @@ def find_adb(preferred=""):
     return "adb"
 
 
+def _dev_args(cfg, args):
+    """给 adb 命令补上 -s <serial>。
+
+    adb_run() 本身不带 -s:电脑上同时有 USB 和无线两条连接(或者有一条掉线的
+    残留记录)时,不带 -s 的 `adb shell` 会直接报 "more than one device"。
+    真机踩过:屏幕常亮一直没生效,就是因为这里漏了 -s。
+    """
+    if cfg.serial and "-s" not in args:
+        return ["-s", cfg.serial] + list(args)
+    return list(args)
+
+
 def _stay_on_get(cfg):
     """手机现在的「充电时不熄屏」设置(0~7);读不到返回 None。"""
-    rc, out = adb_run(cfg, ["shell", "settings", "get", "global",
-                            STAY_ON_KEY], timeout=10)
+    rc, out = adb_run(cfg, _dev_args(cfg, ["shell", "settings", "get", "global",
+                                          STAY_ON_KEY]), timeout=10)
     if rc != 0:
         return None
     txt = (out or "").strip()
@@ -277,8 +289,8 @@ def _stay_on_get(cfg):
 
 
 def _stay_on_put(cfg, value):
-    rc, _ = adb_run(cfg, ["shell", "settings", "put", "global",
-                          STAY_ON_KEY, str(value)], timeout=10)
+    rc, _ = adb_run(cfg, _dev_args(cfg, ["shell", "settings", "put", "global",
+                                        STAY_ON_KEY, str(value)]), timeout=10)
     return rc == 0
 
 
